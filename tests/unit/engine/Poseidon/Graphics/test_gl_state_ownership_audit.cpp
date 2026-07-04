@@ -59,7 +59,7 @@ struct StateOwnership
     size_t allowedFileCount;
 };
 
-// Post-I-02-T1: every managed GL state call lives in a Core/ helper.
+// Post-I-02-T1: every managed GL state call lives in a GL33 helper.
 // The GL33 backend's `.cpp` files contain ZERO raw calls — the per-
 // mode bundles in `Poseidon::render::blend::*`, `Poseidon::render::depthstencil::*`,
 // `Poseidon::render::cull::*` are the unique callsites of each underlying GL
@@ -100,7 +100,7 @@ bool IsAllowedFile(const std::string& name, const OwnerEntry* allowed, size_t al
 TEST_CASE("I-02 T1: managed GL state symbols never appear in backend .cpps (B-002 / B-003)",
           "[Graphics][GL33][StateOwnership][I-02]")
 {
-    // T1 lift: every audited GL state symbol now lives in a Core/
+    // T1 lift: every audited GL state symbol now lives in a GL33
     // helper, not in the backend.  Any backend `.cpp` containing the
     // symbol is a regression — the per-mode bundle was bypassed.
     for (const auto& audit : kAudits)
@@ -128,24 +128,23 @@ TEST_CASE("I-02 T1: managed GL state symbols never appear in backend .cpps (B-00
 
 TEST_CASE("I-02 T1: Core/ helpers expose the named per-mode bundles", "[Graphics][GL33][StateOwnership][I-02]")
 {
-    const std::filesystem::path coreDir =
-        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "Poseidon" / "Graphics" / "Core";
+    const std::filesystem::path gl33Dir = std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33";
 
-    const std::string blend = ReadTextFile(coreDir / "GLBlendState.hpp");
+    const std::string blend = ReadTextFile(gl33Dir / "GLBlendState.hpp");
     REQUIRE_FALSE(blend.empty());
     REQUIRE(blend.find("Opaque()") != std::string::npos);
     REQUIRE(blend.find("AlphaBlend()") != std::string::npos);
     REQUIRE(blend.find("Additive()") != std::string::npos);
     REQUIRE(blend.find("Shadow()") != std::string::npos);
 
-    const std::string ds = ReadTextFile(coreDir / "GLDepthStencilState.hpp");
+    const std::string ds = ReadTextFile(gl33Dir / "GLDepthStencilState.hpp");
     REQUIRE_FALSE(ds.empty());
     REQUIRE(ds.find("Normal(") != std::string::npos);
     REQUIRE(ds.find("ReadOnly(") != std::string::npos);
     REQUIRE(ds.find("Disabled(") != std::string::npos);
     REQUIRE(ds.find("Shadow(") != std::string::npos);
 
-    const std::string cull = ReadTextFile(coreDir / "GLCullState.hpp");
+    const std::string cull = ReadTextFile(gl33Dir / "GLCullState.hpp");
     REQUIRE_FALSE(cull.empty());
     REQUIRE(cull.find("Back()") != std::string::npos);
     REQUIRE(cull.find("Front()") != std::string::npos);

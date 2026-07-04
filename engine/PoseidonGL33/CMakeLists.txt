@@ -9,11 +9,45 @@ set(POSEIDON_GL33_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/TextureGL33.hpp
 )
 
+set(POSEIDON_GL33_SHADER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/vsScreen.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/vsTransform.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/psNormal.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/psFlat.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/vsShadow.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/psShadow.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shadowDepthVS.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shadowDepthFS.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shadowDepthAlphaVS.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shadowDepthAlphaFS.glsl
+)
+
+set(POSEIDON_GL33_GENERATED_SHADER_HEADERS)
+foreach(shader_file IN LISTS POSEIDON_GL33_SHADER_SOURCES)
+    get_filename_component(shader_name "${shader_file}" NAME)
+    set(shader_header "${CMAKE_BINARY_DIR}/generated/PoseidonGL33/Shaders/${shader_name}.hpp")
+    add_custom_command(
+        OUTPUT ${shader_header}
+        COMMAND ${CMAKE_COMMAND}
+            -DINPUT_FILE=${shader_file}
+            -DOUTPUT_FILE=${shader_header}
+            -P ${CMAKE_SOURCE_DIR}/cmake/GenerateShaderHeader.cmake
+        DEPENDS ${shader_file} ${CMAKE_SOURCE_DIR}/cmake/GenerateShaderHeader.cmake
+        VERBATIM
+    )
+    list(APPEND POSEIDON_GL33_GENERATED_SHADER_HEADERS ${shader_header})
+endforeach()
+
+add_custom_target(PoseidonGL33ShaderHeaders DEPENDS ${POSEIDON_GL33_GENERATED_SHADER_HEADERS})
+
 add_library(PoseidonGL33 STATIC
     ${POSEIDON_GL33_SOURCES}
     ${POSEIDON_GL33_HEADERS}
+    ${POSEIDON_GL33_SHADER_SOURCES}
     ${CMAKE_SOURCE_DIR}/thirdparty/glad/src/gl.c
 )
+
+add_dependencies(PoseidonGL33 PoseidonGL33ShaderHeaders)
 
 target_link_libraries(PoseidonGL33 PUBLIC Poseidon)
 

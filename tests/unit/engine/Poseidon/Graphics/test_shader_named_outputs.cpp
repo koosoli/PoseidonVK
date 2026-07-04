@@ -52,6 +52,11 @@ struct ShaderBlock
     std::string source; // GLSL body between R"( and )"
 };
 
+std::filesystem::path RepoRoot()
+{
+    return std::filesystem::path(TESTS_ROOT_DIR).parent_path();
+}
+
 // Extract every `static const char s_*GLSL[] = R"(...)";` block from the
 // shaders source file.  The raw-string delimiter is empty (`R"(`) so we
 // can match it without needing to know which delimiter token was used.
@@ -72,6 +77,53 @@ std::vector<ShaderBlock> ExtractShaderBlocks(const std::string& src)
         blocks.push_back({sym, src.substr(start, close - start)});
     }
     return blocks;
+}
+
+std::vector<ShaderBlock> ExternalizedShaderBlocks()
+{
+    const std::filesystem::path gl33Dir = RepoRoot() / "engine" / "PoseidonGL33" / "Shaders";
+    const struct
+    {
+        const char* symbol;
+        const char* fileName;
+    } files[] = {
+        {"s_vsScreenGLSL", "vsScreen.glsl"},
+        {"s_vsTransformGLSL", "vsTransform.glsl"},
+        {"s_psNormalGLSL", "psNormal.glsl"},
+        {"s_psFlatGLSL", "psFlat.glsl"},
+        {"s_vsShadowGLSL", "vsShadow.glsl"},
+        {"s_psShadowGLSL", "psShadow.glsl"},
+    };
+
+    std::vector<ShaderBlock> blocks;
+    for (const auto& file : files)
+    {
+        const std::string source = ReadTextFile(gl33Dir / file.fileName);
+        if (!source.empty())
+            blocks.push_back({file.symbol, source});
+    }
+    return blocks;
+}
+
+std::vector<ShaderBlock> AllShaderBlocks()
+{
+    const std::filesystem::path shadersCpp = RepoRoot() / "engine" / "PoseidonGL33" / "EngineGL33_Shaders.cpp";
+    const std::string body = ReadTextFile(shadersCpp);
+    std::vector<ShaderBlock> blocks = ExtractShaderBlocks(body);
+    const auto externalized = ExternalizedShaderBlocks();
+    blocks.insert(blocks.end(), externalized.begin(), externalized.end());
+    return blocks;
+}
+
+std::string FindShaderBlockBySymbol(const std::string& symbol)
+{
+    const auto blocks = AllShaderBlocks();
+    for (const auto& block : blocks)
+    {
+        if (block.symbol == symbol)
+            return block.source;
+    }
+    return {};
 }
 
 EShLanguage StageFromSymbol(const std::string& sym)
@@ -116,12 +168,7 @@ TEST_CASE("I-28: every shipped GL33 shader compiles cleanly under glslang", "[Gr
 {
     GlslangInit init;
 
-    const std::filesystem::path shadersCpp =
-        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "EngineGL33_Shaders.cpp";
-    const std::string body = ReadTextFile(shadersCpp);
-    REQUIRE_FALSE(body.empty());
-
-    const auto blocks = ExtractShaderBlocks(body);
+    auto blocks = AllShaderBlocks();
     REQUIRE(blocks.size() >= 4); // at least VSTransform + PSNormal + VSScreen + PSFlat
 
     for (const auto& b : blocks)
@@ -133,6 +180,24 @@ TEST_CASE("I-28: every shipped GL33 shader compiles cleanly under glslang", "[Gr
     }
 }
 
+TEST_CASE("I-28 T1: first shipped GL33 shader pair is externalized to .glsl files", "[Graphics][Shaders][I-28]")
+{
+    const std::filesystem::path repoRoot = RepoRoot();
+    const std::filesystem::path shadersCpp = repoRoot / "engine" / "PoseidonGL33" / "EngineGL33_Shaders.cpp";
+    const std::string body = ReadTextFile(shadersCpp);
+    REQUIRE_FALSE(body.empty());
+
+    const std::filesystem::path vsPath = repoRoot / "engine" / "PoseidonGL33" / "Shaders" / "vsScreen.glsl";
+    const std::filesystem::path fsPath = repoRoot / "engine" / "PoseidonGL33" / "Shaders" / "psFlat.glsl";
+    REQUIRE_FALSE(ReadTextFile(vsPath).empty());
+    REQUIRE_FALSE(ReadTextFile(fsPath).empty());
+
+    REQUIRE(body.find("static const char s_vsScreenGLSL[] = R\"(") == std::string::npos);
+    REQUIRE(body.find("static const char s_psFlatGLSL[] = R\"(") == std::string::npos);
+    REQUIRE(body.find("#include <PoseidonGL33/Shaders/vsScreen.glsl.hpp>") != std::string::npos);
+    REQUIRE(body.find("#include <PoseidonGL33/Shaders/psFlat.glsl.hpp>") != std::string::npos);
+}
+
 TEST_CASE("I-28: VSTransform exposes worldNormal and viewPos as named locals", "[Graphics][Shaders][I-28]")
 {
     // Direct pin: the LIT vertex shader's lighting math depends on
@@ -140,9 +205,8 @@ TEST_CASE("I-28: VSTransform exposes worldNormal and viewPos as named locals", "
     // delete-the-intermediate regression trips the glslang compile
     // above; this test adds a structural sanity check so the names
     // can't drift without an explicit rename touching this list.
-    const std::filesystem::path shadersCpp =
-        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "EngineGL33_Shaders.cpp";
-    const std::string body = ReadTextFile(shadersCpp);
+    const std::string body = FindShaderBlockBySymbol("s_vsTransformGLSL");
+    REQUIRE_FALSE(body.empty());
     REQUIRE(body.find("vec3 worldNormal") != std::string::npos);
     REQUIRE(body.find("vec4 viewPos") != std::string::npos);
 }
@@ -169,21 +233,6 @@ int CountIdentifier(const std::string& haystack, const std::string& needle)
         pos += needle.size();
     }
     return count;
-}
-
-// Find the GLSL block whose `static const char s_<symbol>GLSL[]` symbol
-// matches `symbol`.  Returns the body or empty string if not found.
-std::string FindShaderBlock(const std::string& src, const std::string& symbol)
-{
-    const std::string header = "static const char " + symbol + "[] = R\"(";
-    const size_t start = src.find(header);
-    if (start == std::string::npos)
-        return {};
-    const size_t bodyStart = start + header.size();
-    const size_t bodyEnd = src.find(")\"", bodyStart);
-    if (bodyEnd == std::string::npos)
-        return {};
-    return src.substr(bodyStart, bodyEnd - bodyStart);
 }
 
 } // namespace
@@ -216,11 +265,6 @@ TEST_CASE("I-28 (Option E): every named intermediate is declared AND used in the
     // Splitting these intermediates out of VSTransform into a
     // separate block (without porting the lighting math too) trips
     // this test before any visual regression.
-    const std::filesystem::path shadersCpp =
-        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "EngineGL33_Shaders.cpp";
-    const std::string src = ReadTextFile(shadersCpp);
-    REQUIRE_FALSE(src.empty());
-
     struct Requirement
     {
         std::string shaderSymbol;
@@ -240,7 +284,7 @@ TEST_CASE("I-28 (Option E): every named intermediate is declared AND used in the
     for (const auto& r : requirements)
     {
         CAPTURE(r.shaderSymbol, r.identifier);
-        const std::string block = FindShaderBlock(src, r.shaderSymbol);
+        const std::string block = FindShaderBlockBySymbol(r.shaderSymbol);
         REQUIRE_FALSE(block.empty());
         const int occurrences = CountIdentifier(block, r.identifier);
         CAPTURE(occurrences);

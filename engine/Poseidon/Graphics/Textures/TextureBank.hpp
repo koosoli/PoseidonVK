@@ -73,6 +73,10 @@ class Texture : public RemoveLLinks
 
     virtual void SetMipmapRange(int min, int max) {}
 
+    // Backend-neutral query used by shared code to detect whether a texture's
+    // GPU-side image was dropped underneath a still-live Texture object.
+    virtual bool HasValidGpuImage() const { return true; }
+
     virtual bool VerifyChecksum(const MipInfo& mip) const = 0; // verify consistency
 
     const char* Name() const { return _name; }

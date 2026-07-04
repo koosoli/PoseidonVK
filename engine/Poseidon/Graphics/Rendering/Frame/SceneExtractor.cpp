@@ -82,7 +82,7 @@ SceneDraw drawItemToSceneDraw(const DrawItem& item)
 
     out.descriptor = render::BuildRenderPassDescriptor(item.specFlags, ctx);
 
-    // Mesh + index range — only TL draws carry buffer info; queue
+    // Mesh resource + index range — only TL draws carry buffer info; queue
     // draws set isTLDraw=false and don't reference a mesh.  The capture
     // site already resolves section -> index range (DrawSectionTL fills
     // `firstIndex` + `indexCount` from the backend's section table), so
@@ -92,9 +92,9 @@ SceneDraw drawItemToSceneDraw(const DrawItem& item)
     {
         out.indexBegin = item.firstIndex;
         out.indexCount = item.indexCount;
-        out.mesh.vao = item.backendMeshHandle;
-        out.textures[0].id = item.backendTextureHandle;
-        out.textures[1].id = item.backendTexture1Handle;
+        out.mesh.id = item.backendMeshResourceId;
+        out.textures[0].id = item.backendTextureResourceId;
+        out.textures[1].id = item.backendTexture1ResourceId;
     }
     return out;
 }

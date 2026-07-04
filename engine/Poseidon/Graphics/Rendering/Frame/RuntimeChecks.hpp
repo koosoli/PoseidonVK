@@ -57,18 +57,18 @@ std::optional<RuntimeViolation> DetectViewportMismatch(
     int tolerancePx = 0);
 
 // Every captured TL draw must reach the frame layer with a
-// non-zero VAO handle — `EmitDraw` skips a zero VAO, so a zero here
-// means a draw was captured that emission silently dropped.
+// non-zero backend mesh resource id — `EmitDraw` skips a missing mesh, so a
+// zero here means a draw was captured that emission silently dropped.
 // `tlDrawCount` is the number of indexed
-// draws in this frame; `tlDrawsWithZeroVao` is how many of those
-// arrived with `mesh.vao == 0`.  Non-zero means SceneExtractor saw
+// draws in this frame; `tlDrawsWithMissingMeshHandle` is how many of those
+// arrived with `mesh.id == 0`.  Non-zero means SceneExtractor saw
 // a DrawItem the backend hadn't populated — either a path that
 // doesn't go through `DrawSectionTL` and shouldn't have isTLDraw
 // set, or a regression in the capture site.  Threshold is hard 0;
 // even one stray draw is a structural bug worth flagging.
 std::optional<RuntimeViolation> DetectMissingMeshHandles(
     unsigned int tlDrawCount,
-    unsigned int tlDrawsWithZeroVao);
+    unsigned int tlDrawsWithMissingMeshHandle);
 
 // When a GL texture bind-skip is taken (the bind cache claims `unit`
 // already holds `cachedHandle`, so glBindTexture is elided), the handle read

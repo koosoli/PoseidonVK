@@ -13,10 +13,30 @@ using Poseidon::CmpStartStr;
 #include <Poseidon/Core/Global.hpp>
 #include <Poseidon/Graphics/Textures/LooseTextures.hpp>
 #include <Poseidon/Graphics/Textures/PAADecoder.hpp>
+#include <unordered_map>
 #include <vector>
 #include <cstring>
 
 #include <glad/gl.h>
+
+namespace
+{
+
+std::unordered_map<std::uint32_t, TextureGL33*>& TextureResourceRegistry()
+{
+    static std::unordered_map<std::uint32_t, TextureGL33*> registry;
+    return registry;
+}
+
+std::uint32_t AllocateTextureResourceId()
+{
+    static std::uint32_t nextId = TextureGL33::FallbackResourceId() + 1;
+    // Monotonic process-local ids: never reused, so a stale captured id cannot
+    // alias a different texture later in the same run.
+    return nextId++;
+}
+
+} // namespace
 
 int MipmapSizeGL33(PacFormat format, int w, int h)
 {
@@ -368,13 +388,24 @@ TextureGL33::TextureGL33()
       _isDetail(false), _useDetail(false), _cache(nullptr), _inUse(0), _interpolate(nullptr), _maxSize(256),
       _initialized(false)
 {
+    _textureResourceId = AllocateTextureResourceId();
+    TextureResourceRegistry()[_textureResourceId] = this;
 }
 
 TextureGL33::~TextureGL33()
 {
+    TextureResourceRegistry().erase(_textureResourceId);
     ReleaseMemory(false);
     ReleaseSmall(false);
     GEngine->TextureDestroyed(this);
+}
+
+unsigned int TextureGL33::ResolveHandle(std::uint32_t resourceId)
+{
+    if (resourceId == FallbackResourceId())
+        return 0;
+    const auto it = TextureResourceRegistry().find(resourceId);
+    return it != TextureResourceRegistry().end() && it->second ? it->second->GetHandle() : 0;
 }
 
 void TextureGL33::SetMaxSize(int size)

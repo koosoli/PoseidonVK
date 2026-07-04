@@ -15,7 +15,7 @@
 //
 // The T1 lift: backend code never calls `glMapBufferRange` directly.
 // All buffer-mapping flows through one of two named helpers in
-// `engine/Poseidon/Graphics/Core/GLBufferMap.hpp`:
+// `engine/PoseidonGL33/GLBufferMap.hpp`:
 //
 //   Poseidon::render::buf::MapDynamicWriteInvalidate(target, offset, length)
 //     — calls glMapBufferRange with WRITE|INVALIDATE; the only API
@@ -57,8 +57,7 @@ std::filesystem::path Gl33Dir()
 
 std::filesystem::path BufferMapHelper()
 {
-    return std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "Poseidon" / "Graphics" / "Core" /
-           "GLBufferMap.hpp";
+    return std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "GLBufferMap.hpp";
 }
 
 int CountOccurrences(const std::string& haystack, const std::string& needle)

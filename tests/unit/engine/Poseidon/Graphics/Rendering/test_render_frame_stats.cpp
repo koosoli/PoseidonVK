@@ -40,6 +40,9 @@ TEST_CASE("Frame/FrameStats: empty Frame folds to zeroes", "[render-frame][frame
     REQUIRE(s.passCount == 0);
     REQUIRE(s.drawCount == 0);
     REQUIRE(s.maxDrawsInPass == 0);
+    REQUIRE(s.uniqueTextureCount == 0);
+    REQUIRE(s.uniqueVertexBufferCount == 0);
+    REQUIRE(s.uniqueIndexBufferCount == 0);
 }
 
 TEST_CASE("Frame/FrameStats: counts passes and draws on a one-draw frame", "[render-frame][frame-stats]")
@@ -71,6 +74,57 @@ TEST_CASE("Frame/FrameStats: maxDrawsInPass tracks the busiest pass", "[render-f
     REQUIRE(s.passCount == 2);
     REQUIRE(s.drawCount == 4);
     REQUIRE(s.maxDrawsInPass == 3);
+}
+
+TEST_CASE("Frame/FrameStats: counts unique non-zero texture and per-role buffer handles once", "[render-frame][frame-stats]")
+{
+    v2::Frame f;
+    v2::Pass pass;
+
+    v2::Draw a;
+    a.mesh.vbo.id = 10;
+    a.mesh.ibo.id = 20;
+    a.textures[0].id = 100;
+    a.textures[1].id = 200;
+
+    v2::Draw b;
+    b.mesh.vbo.id = 10;  // duplicate VBO
+    b.mesh.ibo.id = 30;  // new IBO
+    b.textures[0].id = 100; // duplicate texture
+    b.textures[2].id = 300; // new texture
+
+    v2::Draw c;
+    // zero IDs are placeholders and should not count.
+    c.mesh.vbo.id = 0;
+    c.mesh.ibo.id = 0;
+
+    pass.draws.push_back(a);
+    pass.draws.push_back(b);
+    pass.draws.push_back(c);
+    f.passes.push_back(pass);
+
+    const v2::FrameStats s = v2::CountFrameStats(f);
+
+    REQUIRE(s.drawCount == 3);
+    REQUIRE(s.uniqueVertexBufferCount == 1);
+    REQUIRE(s.uniqueIndexBufferCount == 2);
+    REQUIRE(s.uniqueTextureCount == 3);
+}
+
+TEST_CASE("Frame/FrameStats: same numeric id in VBO and IBO roles counts separately", "[render-frame][frame-stats]")
+{
+    v2::Frame f;
+    v2::Pass pass;
+    v2::Draw d;
+    d.mesh.vbo.id = 7;
+    d.mesh.ibo.id = 7;
+    pass.draws.push_back(d);
+    f.passes.push_back(pass);
+
+    const v2::FrameStats s = v2::CountFrameStats(f);
+
+    REQUIRE(s.uniqueVertexBufferCount == 1);
+    REQUIRE(s.uniqueIndexBufferCount == 1);
 }
 
 TEST_CASE("Frame/FrameStats: a pure fold never accumulates across frames", "[render-frame][frame-stats]")

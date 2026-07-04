@@ -41,7 +41,6 @@ using Poseidon::Asset::Formats::P3DFormatDetector;
 #include <Poseidon/Foundation/Logging/Logging.hpp>
 #include <Poseidon/World/Simulation/Animation/RtAnimation.hpp>
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
-#include <PoseidonGL33/TextureGL33.hpp>
 #include <Poseidon/Graphics/Core/Engine.hpp>
 #include <Poseidon/Input/ViewerController.hpp>
 #include <Poseidon/Graphics/Cursor/ViewerCursorOverlay.hpp>

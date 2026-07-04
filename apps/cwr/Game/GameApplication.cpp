@@ -1536,6 +1536,13 @@ Engine* GameApplication::CreateGraphicsEngine(const GraphicsEngineParams& params
         engine = GraphicsEngineFactory::Create(GraphicsBackend::Auto, params);
     }
 
+    if (engine)
+    {
+        const char* requestedBackend = renderBackend.empty() ? "auto" : renderBackend.c_str();
+        LOG_INFO(Core, "Graphics engine created: requested_backend={} renderer={}", requestedBackend,
+                 (const char*)engine->GetRendererName());
+    }
+
     if (engine && AppConfig::Instance().NoMouseGrab())
         engine->SetMouseGrab(false);
 

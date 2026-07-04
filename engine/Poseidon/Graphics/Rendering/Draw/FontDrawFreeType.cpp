@@ -1,5 +1,4 @@
 #include <Poseidon/Graphics/Core/Engine.hpp>
-#include <PoseidonGL33/TextureGL33.hpp>
 #include <Poseidon/Graphics/Rendering/Draw/Font.hpp>
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
@@ -35,21 +34,6 @@ void ClearFreeTypeAtlasTextures()
     GetAtlasMap().clear();
 }
 
-// Detect a Texture whose backing GPU surface has been freed (e.g.
-// after TextBankGL33::ForceReloadAll dropped every handle in the
-// bank for an F5 hot-reload).  The CPU-side atlas pixels in
-// FontRenderer's pages are still valid, but our cached
-// Ref<Texture> points at a TextureGL33 with _surface.GetTexture()=0
-// — UpdateDynamic on that would write to a dead handle and the
-// next bind samples zero alpha (= invisible text).
-static bool IsTextureGpuValid(Texture* tex)
-{
-    if (!tex)
-        return false;
-    auto* gl = static_cast<class TextureGL33*>(tex);
-    return gl->GetHandle() != 0;
-}
-
 static void SyncAtlasTextures(Engine* engine, Poseidon::ui::FontRenderer* fr)
 {
     auto& textures = GetAtlasMap()[fr];
@@ -66,7 +50,7 @@ static void SyncAtlasTextures(Engine* engine, Poseidon::ui::FontRenderer* fr)
         // Without this, a paused atlas with no new glyphs since last
         // sync (page.dirty == false) takes the `continue` branch and
         // never re-uploads — so text vanishes after F5 reload.
-        if (textures[i] && !IsTextureGpuValid(textures[i]))
+        if (textures[i] && !textures[i]->HasValidGpuImage())
             textures[i] = nullptr;
 
         if (!page.dirty && textures[i])

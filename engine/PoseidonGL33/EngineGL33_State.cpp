@@ -1,12 +1,12 @@
 #include <PoseidonGL33/EngineGL33.hpp>
 #include <PoseidonGL33/GL33BindCache.hpp>
 #include <PoseidonGL33/TextureGL33.hpp>
-#include <Poseidon/Graphics/Core/GLBlendState.hpp>
-#include <Poseidon/Graphics/Core/GLClear.hpp>
-#include <Poseidon/Graphics/Core/GLCullState.hpp>
-#include <Poseidon/Graphics/Core/GLDepthStencilState.hpp>
-#include <Poseidon/Graphics/Core/GLPipelineState.hpp>
-#include <Poseidon/Graphics/Core/GLSampler.hpp>
+#include <PoseidonGL33/GLBlendState.hpp>
+#include <PoseidonGL33/GLClear.hpp>
+#include <PoseidonGL33/GLCullState.hpp>
+#include <PoseidonGL33/GLDepthStencilState.hpp>
+#include <PoseidonGL33/GLPipelineState.hpp>
+#include <PoseidonGL33/GLSampler.hpp>
 #include <Poseidon/Graphics/Shared/RenderDocCapture.hpp>
 #include <Poseidon/Graphics/Rendering/ValidateRenderPassDescriptor.hpp>
 
@@ -648,10 +648,11 @@ void EngineGL33::SetTexture(const TextureGL33* tex, const Poseidon::render::Lega
     // bound texture's residue, plus a LOW id=131204 warning).  Bind a 1x1
     // opaque-white sentinel instead — `tex.rgb * vertColor.rgb` with
     // tex=white yields vertColor, exactly matching the FF semantics.
+    const std::uint32_t resourceId = tex ? tex->GetResourceId() : TextureGL33::FallbackResourceId();
     unsigned int handle = tex ? tex->GetHandle() : _fallbackWhiteTex;
-    // Snapshot the GL handle into the next TL draw's record so
-    // the frame layer's `EmitDraw` can rebind without crossing the GL33 layering.
-    _currentDrawItem.backendTextureHandle = handle;
+    // Snapshot the backend texture resource id into the next TL draw's record so
+    // the frame layer can stay backend-neutral and GL33 can resolve at emit time.
+    _currentDrawItem.backendTextureResourceId = resourceId;
 
     GL33Bind::Tex2D(0, handle);
 
@@ -686,10 +687,12 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
     // multiplied out), the driver validates the binding.  Bind the white
     // sentinel for SingleTex / for any null detail-spec-grass texture.
     unsigned int boundHandle = _fallbackWhiteTex;
+    std::uint32_t boundResourceId = TextureGL33::FallbackResourceId();
     switch (format)
     {
         case SingleTex:
             boundHandle = _fallbackWhiteTex;
+            boundResourceId = TextureGL33::FallbackResourceId();
             break;
         case DetailTex:
         {
@@ -699,6 +702,7 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
             unsigned int dh = detail ? detail->GetHandle() : 0;
             LOG_DEBUG(Graphics, "GL33: SetMultiTex DetailTex handle={} detail={}", dh, (void*)detail);
             boundHandle = dh ? dh : _fallbackWhiteTex;
+            boundResourceId = detail ? detail->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
         case GrassTex:
@@ -708,6 +712,7 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
                 _textBank->UseMipmap(grass, 0, 0);
             unsigned int gh = grass ? grass->GetHandle() : 0;
             boundHandle = gh ? gh : _fallbackWhiteTex;
+            boundResourceId = grass ? grass->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
         case SpecularTex:
@@ -717,13 +722,14 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
                 _textBank->UseMipmap(spec, 0, 0);
             unsigned int sh = spec ? spec->GetHandle() : 0;
             boundHandle = sh ? sh : _fallbackWhiteTex;
+            boundResourceId = spec ? spec->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
     }
     GL33Bind::Tex2D(1, boundHandle);
     GL33Bind::ActiveUnit(0);
-    // Snapshot for the frame capture: latch the resolved handle so the next TL
-    // capture knows what's bound on TEXTURE1, even across the
-    // early-out path above.
-    _lastTexture1Handle = boundHandle;
+    // Snapshot for the frame capture: latch the resolved resource id so the
+    // next TL capture knows what's bound on TEXTURE1, even across the early-out
+    // path above.
+    _lastTexture1ResourceId = boundResourceId;
 }

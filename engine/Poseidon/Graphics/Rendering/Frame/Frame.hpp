@@ -31,8 +31,8 @@ namespace render::frame
 {
 
 // Resource handles.  Opaque handles used by Draws to reference
-// vertex/index buffers and textures.  Backend resolves handle -> GL
-// object at Execute time.  Typed so a TextureHandle cannot be passed
+// vertex/index buffers and textures.  Backend resolves handle ->
+// backend-local GPU state at Execute time.  Typed so a TextureHandle cannot be passed
 // where a BufferHandle is expected.  (BufferUsage lives in Buffers.hpp.)
 
 struct BufferHandle
@@ -46,14 +46,17 @@ struct TextureHandle
     std::uint32_t id = 0;
 };
 
-// Mesh: VAO + IBO + VBO together.  An IBO bind requires a VAO, so they
-// travel as one MeshHandle — independent IBO binding is unrepresentable.
+// Mesh: opaque backend mesh resource + optional typed buffer ids.  The shared
+// frame layer treats `id` as an opaque token; a backend resolves it to whatever
+// concrete state it needs before issuing the indexed draw.
 
 struct MeshHandle
 {
-    std::uint32_t vao = 0;
+    std::uint32_t id = 0;
     BufferHandle vbo;
     BufferHandle ibo;
+
+    bool HasBackendMesh() const noexcept { return id != 0; }
 };
 
 // Viewport and camera (frame-global, immutable).

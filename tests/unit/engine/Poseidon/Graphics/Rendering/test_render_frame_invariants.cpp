@@ -93,19 +93,19 @@ TEST_CASE("Frame/I-19, I-26: Draw requires a complete RenderPassDescriptor", "[r
     REQUIRE(d.descriptor.blend == Poseidon::render::BlendMode::Opaque);
 }
 
-// I-22 / B-011 — IBO bind requires VAO (compile-time via MeshHandle)
+// I-22 / B-011 — the shared frame layer carries one mesh resource id plus the
+// typed buffer handles that belong to that mesh.
 
-TEST_CASE("Frame/I-22: MeshHandle bundles VAO+VBO+IBO; independent IBO bind unrepresentable",
+TEST_CASE("Frame/I-22: MeshHandle bundles mesh resource id + VBO + IBO",
           "[render-frame][invariants][I-22]")
 {
-    // The Draw type holds a MeshHandle, which forces VAO and IBO to
-    // be set together.  There is no separate "bind IBO" path — the
-    // backend resolves MeshHandle -> bind VAO -> the IBO comes along.
+    // The Draw type holds a MeshHandle, which forces the opaque backend mesh
+    // token and the typed buffer handles to travel together.
     Poseidon::render::frame::MeshHandle m{};
     static_assert(std::is_aggregate_v<Poseidon::render::frame::MeshHandle>);
-    static_assert(sizeof(m.vao) > 0);
+    static_assert(sizeof(m.id) > 0);
     static_assert(sizeof(m.ibo) > 0);
-    SUCCEED("MeshHandle ties VAO and IBO at the type level.");
+    SUCCEED("MeshHandle carries one opaque mesh id plus its typed buffer handles.");
 }
 
 // I-09 / B-008, B-009 — coplanar disambiguation (validator unit-test)
@@ -400,18 +400,19 @@ TEST_CASE("Frame/E.11.j: ComputeIndexByteOffset for large index range", "[render
 
 TEST_CASE("Frame/E.11.j: Draw struct carries every glDrawElements input", "[render-frame][emit][E.11.j]")
 {
-    // A representative TL draw — VAO 7, raw index range [3, 9),
+    // A representative TL draw — mesh resource id 7, raw index range [3, 9),
     // textured world-opaque.  After SceneExtractor + BuildFrame
     // the resulting Draw should have everything that
     // `glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_SHORT,
     // offset_bytes)` needs.
     Poseidon::render::frame::Draw d;
     d.descriptor.pass = Poseidon::render::PassKind::WorldOpaque;
-    d.mesh.vao = 7;
+    d.mesh.id = 7;
     d.indexBegin = 3;
     d.indexCount = 6;
 
-    REQUIRE(d.mesh.vao == 7);
+    REQUIRE(d.mesh.id == 7);
+    REQUIRE(d.mesh.HasBackendMesh());
     REQUIRE(d.indexCount == 6);
     REQUIRE(Poseidon::render::frame::ComputeIndexByteOffset(d.indexBegin, sizeof(short)) == 6);
 }

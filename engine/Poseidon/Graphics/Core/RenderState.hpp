@@ -125,24 +125,21 @@ struct DrawItem
     int indexCount = 0;
     void* vertexBuffer = nullptr; // mesh/vertex buffer reference
     bool isTLDraw = false;        // true = DrawSectionTL path, false = queued path
-    // Backend-specific opaque mesh handle (GL: VAO id; D3D: pointer cast).
-    // Captured at draw time so the frame layer's SceneExtractor can resolve the mesh
-    // to a typed `render::frame::MeshHandle.vao` without dereferencing
-    // `vertexBuffer` or knowing the backend's concrete buffer class.
-    std::uint32_t backendMeshHandle = 0;
-    // Backend-specific texture handle for TEXTURE0 (GL: texture id).
+    // Backend-specific opaque mesh resource id.  Backends own the mapping from
+    // this id to concrete GPU state (GL33: VAO id; Vulkan: mesh binding state).
+    // The frame layer treats it as an opaque token.
+    std::uint32_t backendMeshResourceId = 0;
+    // Backend-specific texture resource id for TEXTURE0.
     // Captured when the backend's `SetTexture` rebinds, before the
-    // next TL draw observes the snapshot.  the frame layer's SceneExtractor lands
-    // it in `SceneDraw.textures[0]` so the frame layer's `EmitDraw` can rebind the
-    // same texture the legacy path used.
-    std::uint32_t backendTextureHandle = 0;
-    // Backend-specific texture handle for TEXTURE1 (multi-texture
-    // slot: detail / grass / specular).  Tracked across the legacy
-    // `SetMultiTexturing` early-out so the captured DrawItem always
-    // has the *currently bound* multi-tex, not just the most
-    // recently rebound one.  the frame layer's EmitDraw maps this to
-    // `SceneDraw.textures[1]` and rebinds TEXTURE1.
-    std::uint32_t backendTexture1Handle = 0;
+    // next TL draw observes the snapshot.  SceneExtractor lands it in
+    // `SceneDraw.textures[0]`; the backend resolves that id back to a live GPU
+    // handle at emit time.
+    std::uint32_t backendTextureResourceId = 0;
+    // Backend-specific texture resource id for TEXTURE1 (multi-texture slot:
+    // detail / grass / specular).  Tracked across the legacy
+    // `SetMultiTexturing` early-out so the captured DrawItem always has the
+    // *currently bound* multi-tex, not just the most recently rebound one.
+    std::uint32_t backendTexture1ResourceId = 0;
 };
 
 // Map backend spec to PassId.  Pass selection depends entirely on Backend

@@ -115,11 +115,12 @@ void ObserveRenderedFrame(Engine& engine, Scene& scene)
     }
 
     // Mesh-handle runtime check — every TL draw must reach the frame
-    // layer with a resolvable VAO — EmitDraw silently skips zero VAOs.
+    // layer with a resolvable backend mesh binding — EmitDraw silently skips
+    // missing bindings.
     // Counts across all per-pass buckets so a missing capture site
     // anywhere in the engine is visible.
     {
-        unsigned int tlCount = 0, zeroVao = 0;
+        unsigned int tlCount = 0, missingMeshHandle = 0;
         auto count = [&](const std::vector<SceneDraw>& v)
         {
             for (const auto& d : v)
@@ -127,8 +128,8 @@ void ObserveRenderedFrame(Engine& engine, Scene& scene)
                 if (d.indexCount <= 0)
                     continue;
                 ++tlCount;
-                if (d.mesh.vao == 0)
-                    ++zeroVao;
+                if (!d.mesh.HasBackendMesh())
+                    ++missingMeshHandle;
             }
         };
         count(si.shadowDraws);
@@ -139,7 +140,7 @@ void ObserveRenderedFrame(Engine& engine, Scene& scene)
         count(si.waterDraws);
         count(si.worldTransparentDraws);
         count(si.cockpitDraws);
-        const auto vio = DetectMissingMeshHandles(tlCount, zeroVao);
+        const auto vio = DetectMissingMeshHandles(tlCount, missingMeshHandle);
         if (vio && s_meshHandleLogs < 5)
         {
             LOG_WARN(Graphics, "frame runtime {}: {}", vio->ruleId, vio->detail.c_str());
@@ -198,8 +199,10 @@ void ObserveRenderedFrame(Engine& engine, Scene& scene)
         if (s_statsCountdown <= 0)
         {
             const FrameStats s = CountFrameStats(f);
-            LOG_INFO(Graphics, "render frame: passes={} draws={} maxDrawsInPass={} glErrorsThisFrame={}", s.passCount,
-                     s.drawCount, s.maxDrawsInPass, f.newDebugErrors);
+            LOG_INFO(Graphics,
+                     "render frame: passes={} draws={} maxDrawsInPass={} uniqueTextures={} uniqueVertexBuffers={} uniqueIndexBuffers={} glErrorsThisFrame={}",
+                     s.passCount, s.drawCount, s.maxDrawsInPass, s.uniqueTextureCount, s.uniqueVertexBufferCount,
+                     s.uniqueIndexBufferCount, f.newDebugErrors);
             s_statsCountdown = 60;
         }
         else

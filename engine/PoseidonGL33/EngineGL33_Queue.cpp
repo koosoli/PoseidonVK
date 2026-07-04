@@ -2,9 +2,9 @@
 #include <PoseidonGL33/GL33BindCache.hpp>
 #include <PoseidonGL33/TextureGL33.hpp>
 #include <Poseidon/Graphics/Core/FanDecompose.hpp>
-#include <Poseidon/Graphics/Core/GLCullState.hpp>
-#include <Poseidon/Graphics/Core/GLIndexBuffer.hpp>
-#include <Poseidon/Graphics/Core/GLPipelineState.hpp>
+#include <PoseidonGL33/GLCullState.hpp>
+#include <PoseidonGL33/GLIndexBuffer.hpp>
+#include <PoseidonGL33/GLPipelineState.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>

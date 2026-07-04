@@ -338,11 +338,11 @@ class EngineGL33 : public Engine
     void* _glContext = nullptr;
 
     int _prepSpec;
-    // Most recently bound TEXTURE1 handle.  Tracks SetMultiTexturing's
-    // resolved handle across its early-out path so each TL draw's
-    // captured DrawItem records the *currently bound* multi-tex even
-    // when the format didn't change since the previous draw.
-    unsigned int _lastTexture1Handle = 0;
+    // Most recently selected TEXTURE1 resource id.  Tracks SetMultiTexturing's
+    // resolved texture selection across its early-out path so each TL draw's
+    // captured DrawItem records the *currently bound* multi-tex even when the
+    // format didn't change since the previous draw.
+    std::uint32_t _lastTexture1ResourceId = 0;
     bool _stencilExclusionEnabled;
     TexGenMode _texGenMode;
     Poseidon::PassId _activePassId = Poseidon::PassId::ScreenSpace;

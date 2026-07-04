@@ -2,7 +2,7 @@
 #include <PoseidonGL33/GL33BindCache.hpp>
 #include <PoseidonGL33/TextureGL33.hpp>
 
-#include <Poseidon/Graphics/Core/GLIndexBuffer.hpp>
+#include <PoseidonGL33/GLIndexBuffer.hpp>
 #include <PoseidonGL33/GLVertexAttribLayouts.hpp>
 
 #include <glad/gl.h>

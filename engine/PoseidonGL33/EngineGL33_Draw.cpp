@@ -1,5 +1,5 @@
 #include <PoseidonGL33/EngineGL33.hpp>
-#include <Poseidon/Graphics/Core/GLIndexBuffer.hpp>
+#include <PoseidonGL33/GLIndexBuffer.hpp>
 #include <Poseidon/Graphics/Core/ZBiasMath.hpp>
 #include <Poseidon/Core/Global.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>

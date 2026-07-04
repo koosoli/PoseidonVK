@@ -14,7 +14,7 @@
 // to the global default VAO and never reaches the draw VAO that
 // needs it — `GL_INVALID_OPERATION` floods the driver log either way.
 //
-// The T1 lift adds `engine/Poseidon/Graphics/Core/GLIndexBuffer.hpp`
+// The T1 lift adds `engine/PoseidonGL33/GLIndexBuffer.hpp`
 // with `Poseidon::render::ibo::BindOnActiveVao(GLuint ibo)`.  The helper is
 // the unique callsite of `glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ...)`
 // in the engine and, in debug builds, asserts the current VAO is
@@ -42,8 +42,7 @@ std::filesystem::path Gl33Dir()
 
 std::filesystem::path IndexBufferHelper()
 {
-    return std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "Poseidon" / "Graphics" / "Core" /
-           "GLIndexBuffer.hpp";
+    return std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "GLIndexBuffer.hpp";
 }
 
 int CountOccurrences(const std::string& haystack, const std::string& needle)

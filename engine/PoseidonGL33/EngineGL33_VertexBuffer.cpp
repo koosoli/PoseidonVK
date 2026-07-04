@@ -3,18 +3,57 @@
 #include <PoseidonGL33/TextureGL33.hpp>
 #include <Poseidon/Graphics/Rendering/Shape/Shape.hpp>
 #include <Poseidon/Graphics/Rendering/Primitives/Poly.hpp>
-#include <Poseidon/Graphics/Core/GLBufferMap.hpp>
-#include <Poseidon/Graphics/Core/GLClear.hpp>
-#include <Poseidon/Graphics/Core/GLIndexBuffer.hpp>
-#include <Poseidon/Graphics/Core/GLPipelineState.hpp>
+#include <PoseidonGL33/GLBufferMap.hpp>
+#include <PoseidonGL33/GLClear.hpp>
+#include <PoseidonGL33/GLIndexBuffer.hpp>
+#include <PoseidonGL33/GLPipelineState.hpp>
 #include <PoseidonGL33/GLVertexAttribLayouts.hpp>
 #include <Poseidon/Graphics/Rendering/Frame/Frame.hpp>
 #include <Poseidon/Graphics/Shared/ScreenshotWriter.hpp>
 #include <Poseidon/Dev/Debug/DebugOverlay.hpp>
 
+#include <unordered_map>
+
 using namespace Poseidon::Dev;
 
 #include <glad/gl.h>
+
+namespace
+{
+
+std::unordered_map<std::uint32_t, GLuint>& MeshResourceRegistry()
+{
+    static std::unordered_map<std::uint32_t, GLuint> registry;
+    return registry;
+}
+
+std::uint32_t AllocateMeshResourceId()
+{
+    static std::uint32_t nextId = 1;
+    // Monotonic process-local ids: never reused, so a stale captured id cannot
+    // alias a different mesh later in the same run.
+    return nextId++;
+}
+
+void RegisterMeshResource(std::uint32_t id, GLuint vao)
+{
+    if (id != 0 && vao != 0)
+        MeshResourceRegistry()[id] = vao;
+}
+
+void UnregisterMeshResource(std::uint32_t id)
+{
+    if (id != 0)
+        MeshResourceRegistry().erase(id);
+}
+
+GLuint ResolveMeshVao(std::uint32_t id)
+{
+    const auto it = MeshResourceRegistry().find(id);
+    return it != MeshResourceRegistry().end() ? it->second : 0;
+}
+
+} // namespace
 
 
 // Index range per mesh section.
@@ -30,6 +69,7 @@ class VertexBufferGL33 : public VertexBuffer
     friend class EngineGL33;
 
   private:
+        std::uint32_t _meshResourceId = 0;
     GLuint _vao = 0;
     GLuint _vbo = 0;
     GLuint _ibo = 0;
@@ -52,6 +92,7 @@ class VertexBufferGL33 : public VertexBuffer
 
 VertexBufferGL33::~VertexBufferGL33()
 {
+    UnregisterMeshResource(_meshResourceId);
     if (_vao)
         GL33Bind::OnVaoDeleted(_vao);
         glDeleteVertexArrays(1, &_vao);
@@ -123,6 +164,8 @@ bool VertexBufferGL33::Init(const Shape& src, VBType type)
     // GL_ELEMENT_ARRAY_BUFFER bind (the IBO binding is part of VAO state).
     // Create + bind the VAO first, then bind buffers inside it.
     glGenVertexArrays(1, &_vao);
+    _meshResourceId = AllocateMeshResourceId();
+    RegisterMeshResource(_meshResourceId, _vao);
     GL33Bind::Vao(_vao);
 
     // Create and fill VBO
@@ -267,8 +310,8 @@ void EngineGL33::DrawSectionTL(const Shape& sMesh, int beg, int end)
     item.firstIndex = siBeg.beg;
     item.indexCount = indexCount;
     item.vertexBuffer = buf;
-    item.backendMeshHandle = buf->_vao;
-    item.backendTexture1Handle = _lastTexture1Handle;
+    item.backendMeshResourceId = buf->_meshResourceId;
+    item.backendTexture1ResourceId = _lastTexture1ResourceId;
     item.passId = SpecToPassId(item.specFlags);
     _drawItems.push_back(item);
 
@@ -276,47 +319,55 @@ void EngineGL33::DrawSectionTL(const Shape& sMesh, int beg, int end)
     // current state and dispatch through `EmitDraw`.  State
     // (descriptor / shader / sampler) was applied by the
     // `PrepareTL` -> `ApplyPassState` chain before this call, so
-    // `EmitDraw` just needs to bind the mesh-specific VAO + textures,
+    // `EmitDraw` just needs to resolve the mesh resource to a VAO, bind it,
+    // rebind textures,
     // upload the per-draw world matrix, and issue the indexed draw.
     Poseidon::render::frame::Draw d;
     d.world = item.worldMatrix;
-    d.mesh.vao = buf->_vao;
+    d.mesh.id = buf->_meshResourceId;
     d.indexBegin = siBeg.beg;
     d.indexCount = indexCount;
-    d.textures[0].id = item.backendTextureHandle;
-    d.textures[1].id = _lastTexture1Handle;
+    d.textures[0].id = item.backendTextureResourceId;
+    d.textures[1].id = _lastTexture1ResourceId;
     EmitDraw(d);
 }
 
 // The emission seam — issues the indexed draw call from a typed
-// `Poseidon::render::frame::Draw` value: bind the mesh VAO, rebind
+// `Poseidon::render::frame::Draw` value: resolve the backend mesh resource,
+// bind the mesh VAO, rebind
 // TEXTURE0/TEXTURE1, upload the per-draw world matrix, flush PS
 // constants, issue glDrawElements with the index byte offset computed
 // from `d.indexBegin`.  Pass-level state (descriptor, shader, sampler)
 // was bound by `ApplyPassState` before the `DrawSectionTL` call.
 //
-// Bails on a zero VAO or zero indexCount so a misformed Draw can't
+// Bails on a missing backend mesh binding or zero indexCount so a malformed Draw can't
 // crash the GL driver — the I-22 runtime check fires the warning,
 // this path just stays defensive.
 void EngineGL33::EmitDraw(const Poseidon::render::frame::Draw& d)
 {
     if (!_glContext)
         return;
-    if (d.mesh.vao == 0 || d.indexCount <= 0)
+    if (!d.mesh.HasBackendMesh() || d.indexCount <= 0)
         return;
 
-    GL33Bind::Vao(d.mesh.vao);
+    const GLuint vao = ResolveMeshVao(d.mesh.id);
+    if (vao == 0)
+        return;
 
-    // TEXTURE0 + TEXTURE1 binds.  Both handles were captured from the
-    // `SetTexture` / `SetMultiTexturing` callsites, so this rebinds
-    // the same multi-tex configuration regardless of what's currently
-    // bound.  Handle 0 is skipped (sentinel).  The TEXTURE1 bind ends
-    // with the active unit back on TEXTURE0 — every subsequent call
-    // assumes that.
-    if (d.textures[1].id != 0)
-        GL33Bind::Tex2D(1, d.textures[1].id);
-    if (d.textures[0].id != 0)
-        GL33Bind::Tex2D(0, d.textures[0].id);
+    GL33Bind::Vao(vao);
+
+    // TEXTURE0 + TEXTURE1 binds.  The shared Draw carries backend-neutral
+    // texture resource ids; GL33 resolves them to live GL texture handles here.
+    const unsigned int handle1 = d.textures[1].id == TextureGL33::FallbackResourceId()
+                                     ? _fallbackWhiteTex
+                                     : TextureGL33::ResolveHandle(d.textures[1].id);
+    const unsigned int handle0 = d.textures[0].id == TextureGL33::FallbackResourceId()
+                                     ? _fallbackWhiteTex
+                                     : TextureGL33::ResolveHandle(d.textures[0].id);
+    if (handle1 != 0)
+        GL33Bind::Tex2D(1, handle1);
+    if (handle0 != 0)
+        GL33Bind::Tex2D(0, handle0);
     else
         GL33Bind::ActiveUnit(0);
 

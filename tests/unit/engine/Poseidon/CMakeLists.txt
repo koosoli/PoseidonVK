@@ -149,6 +149,7 @@ set(POSEIDON_TEST_SOURCES
     Graphics/test_shutdown_order_audit.cpp
     Graphics/test_gl_state_ownership_audit.cpp
     Graphics/test_debug_group_audit.cpp
+    Graphics/test_backend_boundary_audit.cpp
     Graphics/test_spec_bit_backend_boundary.cpp
     Graphics/test_whole_shape_pass_routing.cpp
     Graphics/test_render_conventions_audit.cpp

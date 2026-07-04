@@ -29,7 +29,7 @@ v2::SceneDraw makeDraw(Poseidon::render::PassKind pass)
     v2::SceneDraw d;
     d.descriptor.pass = pass;
     d.descriptor.fog = Poseidon::render::FogMode::Disabled;
-    d.mesh.vao = 7;
+    d.mesh.id = 7;
     d.indexBegin = 0;
     d.indexCount = 36;
     return d;

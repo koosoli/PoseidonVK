@@ -55,7 +55,7 @@ struct AllowedCallsite
 
 // Post-I-03-T1: every glClear in the engine goes through
 // `Poseidon::render::clear::ColorDepthStencil` / `WithMask` in
-// `engine/Poseidon/Graphics/Core/GLClear.hpp`.  The helpers issue
+// `engine/PoseidonGL33/GLClear.hpp`.  The helpers issue
 // `glDepthMask(GL_TRUE)` before the depth-touching clear so the
 // B-007 precondition is structurally enforced.  Backend `.cpp` files
 // contain zero raw `glClear(` callsites.
@@ -116,7 +116,7 @@ BackendSourceCorpus ReadGL33Corpus()
 TEST_CASE("I-03 T1: GL33 backend does not call glClear directly (B-007)", "[Graphics][GL33][StateCacheAudit][I-03]")
 {
     // Post-I-03-T1: every glClear in the backend routes through the
-    // named helpers in `engine/Poseidon/Graphics/Core/GLClear.hpp`,
+    // named helpers in `engine/PoseidonGL33/GLClear.hpp`,
     // which bundle `glDepthMask(GL_TRUE)` with the depth-touching
     // clear so the B-007 precondition is structurally enforced.
     auto corpus = ReadGL33Corpus();
@@ -133,8 +133,8 @@ TEST_CASE("I-03 T1: GL33 backend does not call glClear directly (B-007)", "[Grap
 TEST_CASE("I-03 T1: GLClear.hpp helpers bundle glDepthMask with depth clears",
           "[Graphics][GL33][StateCacheAudit][I-03]")
 {
-    const std::filesystem::path helperPath = std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" /
-                                             "Poseidon" / "Graphics" / "Core" / "GLClear.hpp";
+    const std::filesystem::path helperPath =
+        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "GLClear.hpp";
     const std::string body = ReadTextFile(helperPath);
     REQUIRE_FALSE(body.empty());
 
@@ -222,8 +222,8 @@ TEST_CASE("I-04 T1: per-draw sampler routes through Poseidon::render::sampler::B
     // glBindSampler(1, ...) (caught by the count audit above) or add
     // a new helper to GLSampler.hpp (which is reviewable as the audit
     // entry it requires).
-    const std::filesystem::path helperPath = std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" /
-                                             "Poseidon" / "Graphics" / "Core" / "GLSampler.hpp";
+    const std::filesystem::path helperPath =
+        std::filesystem::path(TESTS_ROOT_DIR).parent_path() / "engine" / "PoseidonGL33" / "GLSampler.hpp";
     const std::string helper = ReadTextFile(helperPath);
     REQUIRE_FALSE(helper.empty());
 

@@ -8,18 +8,36 @@ function(find_llvm_root OUTPUT_VAR ARCH)
         set(${OUTPUT_VAR} "" PARENT_SCOPE)
         return()
     endif()
-    if(ARCH STREQUAL "x86")
+    if(DEFINED ENV{LLVM_ROOT})
+        set(LLVM_DIR "$ENV{LLVM_ROOT}")
+    elseif(DEFINED LLVM_ROOT)
+        set(LLVM_DIR "${LLVM_ROOT}")
+    elseif(ARCH STREQUAL "x86")
         set(LLVM_DIR "C:/Program Files (x86)/LLVM")
     elseif(ARCH STREQUAL "x64")
         set(LLVM_DIR "C:/Program Files/LLVM")
     else()
         message(FATAL_ERROR "Unsupported architecture: ${ARCH}")
     endif()
-    
+
+    # Fallback search: check common non-standard install locations
+    if(NOT EXISTS "${LLVM_DIR}")
+        foreach(_candidate
+            "D:/Program Files/LLVM"
+            "D:/LLVM"
+            "C:/LLVM"
+        )
+            if(EXISTS "${_candidate}")
+                set(LLVM_DIR "${_candidate}")
+                break()
+            endif()
+        endforeach()
+    endif()
+
     if(EXISTS "${LLVM_DIR}")
         set(${OUTPUT_VAR} "${LLVM_DIR}" PARENT_SCOPE)
     else()
-        message(FATAL_ERROR "LLVM not found at ${LLVM_DIR}")
+        message(FATAL_ERROR "LLVM not found. Set LLVM_ROOT env variable or CMake variable to your LLVM install directory.")
     endif()
 endfunction()
 

@@ -1,8 +1,8 @@
 #include <PoseidonGL33/EngineGL33.hpp>
 #include <PoseidonGL33/GL33BindCache.hpp>
-#include <Poseidon/Graphics/Core/GLClear.hpp>
-#include <Poseidon/Graphics/Core/GLCullState.hpp>
-#include <Poseidon/Graphics/Core/GLPipelineState.hpp>
+#include <PoseidonGL33/GLClear.hpp>
+#include <PoseidonGL33/GLCullState.hpp>
+#include <PoseidonGL33/GLPipelineState.hpp>
 #include <PoseidonGL33/TextureGL33.hpp>
 #include <Poseidon/Core/Application.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>

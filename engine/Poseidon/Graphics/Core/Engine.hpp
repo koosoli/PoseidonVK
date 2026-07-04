@@ -517,10 +517,10 @@ class Engine : public IGraphicsEngine
     virtual void BeginDebugGroup(const char* /*name*/) {}
     virtual void EndDebugGroup() {}
 
-    // Emit a single indexed draw via the backend's GL path.  Called
-    // inline at `DrawSectionTL` with a non-zero VAO / index count
-    // (the TL path) once the per-draw state has landed.
-    // Implementation issues `glBindVertexArray(d.mesh.vao)` +
+    // Emit a single indexed draw via the backend's graphics path.  Called
+    // inline at `DrawSectionTL` with a valid backend mesh resource id / index
+    // count (the TL path) once the per-draw state has landed.
+    // GL33 resolves `d.mesh.id` -> VAO, then issues `glBindVertexArray(...)` +
     // world-matrix upload + TEXTURE0 + TEXTURE1 binds +
     // `glDrawElements`.  Default no-op so headless / test engines
     // link without graphics; the typed `Draw` parameter is taken by

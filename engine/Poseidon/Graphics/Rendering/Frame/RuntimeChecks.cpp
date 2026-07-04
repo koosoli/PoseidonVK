@@ -25,14 +25,15 @@ std::optional<RuntimeViolation> DetectBlackFrame(bool had3DContent, const std::u
     return std::nullopt;
 }
 
-std::optional<RuntimeViolation> DetectMissingMeshHandles(unsigned int tlDrawCount, unsigned int tlDrawsWithZeroVao)
+std::optional<RuntimeViolation> DetectMissingMeshHandles(unsigned int tlDrawCount,
+                                                         unsigned int tlDrawsWithMissingMeshHandle)
 {
-    if (tlDrawsWithZeroVao == 0)
+    if (tlDrawsWithMissingMeshHandle == 0)
         return std::nullopt;
     RuntimeViolation v;
     v.ruleId = "I-22";
-    v.detail = std::to_string(tlDrawsWithZeroVao) + " of " + std::to_string(tlDrawCount) +
-               " TL draws reached the frame layer with mesh.vao == 0";
+    v.detail = std::to_string(tlDrawsWithMissingMeshHandle) + " of " + std::to_string(tlDrawCount) +
+               " TL draws reached the frame layer with mesh.id == 0";
     return v;
 }
 

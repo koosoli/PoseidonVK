@@ -3,9 +3,9 @@
 
 #include <glad/gl.h>
 
-#include <Poseidon/Graphics/Core/GLClear.hpp>
-#include <Poseidon/Graphics/Core/GLCullState.hpp>
-#include <Poseidon/Graphics/Core/GLDepthStencilState.hpp>
+#include <PoseidonGL33/GLClear.hpp>
+#include <PoseidonGL33/GLCullState.hpp>
+#include <PoseidonGL33/GLDepthStencilState.hpp>
 #include <Poseidon/Graphics/Shared/PNGWriter.hpp>
 #include <PoseidonGL33/TextureGL33.hpp>
 
@@ -50,15 +50,13 @@ struct ResolvedAlphaBatch
     int vertexCount;
 };
 
-const char* kVS = R"(#version 330 core
-layout(location = 0) in vec3 pos;
-uniform mat4 uLightVP;
-void main() { gl_Position = uLightVP * vec4(pos, 1.0); }
-)";
+const char* kVS =
+#include <PoseidonGL33/Shaders/shadowDepthVS.glsl.hpp>
+;
 
-const char* kFS = R"(#version 330 core
-void main() {}
-)";
+const char* kFS =
+#include <PoseidonGL33/Shaders/shadowDepthFS.glsl.hpp>
+;
 
 GLuint CompileOne(GLenum type, const char* src)
 {
@@ -200,19 +198,13 @@ bool EnsureMesh()
     return true;
 }
 
-const char* kAlphaVS = R"(#version 330 core
-layout(location = 0) in vec3 pos;
-layout(location = 1) in vec2 uv;
-uniform mat4 uLightVP;
-out vec2 vUV;
-void main() { vUV = uv; gl_Position = uLightVP * vec4(pos, 1.0); }
-)";
+const char* kAlphaVS =
+#include <PoseidonGL33/Shaders/shadowDepthAlphaVS.glsl.hpp>
+;
 
-const char* kAlphaFS = R"(#version 330 core
-in vec2 vUV;
-uniform sampler2D uTex;
-void main() { if (texture(uTex, vUV).a < 0.5) discard; }
-)";
+const char* kAlphaFS =
+#include <PoseidonGL33/Shaders/shadowDepthAlphaFS.glsl.hpp>
+;
 
 bool EnsureAlphaProgram()
 {

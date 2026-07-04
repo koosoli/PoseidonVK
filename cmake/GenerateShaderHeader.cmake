@@ -1,0 +1,12 @@
+if(NOT DEFINED INPUT_FILE)
+    message(FATAL_ERROR "INPUT_FILE is required")
+endif()
+
+if(NOT DEFINED OUTPUT_FILE)
+    message(FATAL_ERROR "OUTPUT_FILE is required")
+endif()
+
+file(READ "${INPUT_FILE}" SHADER_SOURCE)
+get_filename_component(OUTPUT_DIR "${OUTPUT_FILE}" DIRECTORY)
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+file(WRITE "${OUTPUT_FILE}" "R\"POSEIDON_GLSL(\n${SHADER_SOURCE})POSEIDON_GLSL\"")

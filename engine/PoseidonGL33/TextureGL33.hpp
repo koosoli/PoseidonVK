@@ -74,6 +74,7 @@ class TextureGL33 : public Texture
     friend class EngineGL33;
 
   private:
+    std::uint32_t _textureResourceId = 0;
     SRef<Poseidon::ITextureSource> _src;
 
     Ref<TextureGL33> _interpolate;
@@ -115,6 +116,10 @@ class TextureGL33 : public Texture
     TextureGL33();
     ~TextureGL33() override;
 
+    static constexpr std::uint32_t FallbackResourceId() { return 1; }
+    std::uint32_t GetResourceId() const { return _textureResourceId; }
+    static unsigned int ResolveHandle(std::uint32_t resourceId);
+
     void InitDesc(TextureDescGL33& desc, int levelMin, bool enableDXT);
 
     int LoadLevels(int levelMin);
@@ -125,6 +130,8 @@ class TextureGL33 : public Texture
         unsigned int handle = GetBigHandle();
         return handle ? handle : GetSmallHandle();
     }
+
+    bool HasValidGpuImage() const override { return GetHandle() != 0; }
 
     const SurfaceInfoGL33& GetSurface() const { return _surface.GetTexture() ? _surface : _smallSurface; }
 

@@ -112,22 +112,23 @@ TEST_CASE("Frame/E.11.d: DetectViewportMismatch tolerance window", "[render-fram
     REQUIRE(Poseidon::render::frame::DetectViewportMismatch(0, 0, 800, 600, liveLoose, 1).has_value());
 }
 
-// I-22 — every TL draw must carry a non-zero backend mesh handle.
+// I-22 — every TL draw must carry a non-zero backend mesh resource id.
 
-TEST_CASE("Frame/E.11.h: DetectMissingMeshHandles passes when every TL has a VAO",
+TEST_CASE("Frame/E.11.h: DetectMissingMeshHandles passes when every TL has a mesh resource id",
           "[render-frame][runtime][I-22][E.11.h]")
 {
-    // 198 forest-frame TL draws, all with backendMeshHandle set
+    // 198 forest-frame TL draws, all with backendMeshResourceId set
     // by EngineGL33_VertexBuffer.cpp's DrawSectionTL.
     REQUIRE_FALSE(Poseidon::render::frame::DetectMissingMeshHandles(198, 0).has_value());
 }
 
-TEST_CASE("Frame/E.11.h: DetectMissingMeshHandles flags any zero VAO", "[render-frame][runtime][I-22][E.11.h]")
+TEST_CASE("Frame/E.11.h: DetectMissingMeshHandles flags any missing mesh resource id",
+          "[render-frame][runtime][I-22][E.11.h]")
 {
     // Even one bad draw is structurally wrong — a TL draw arrived
     // at the frame layer without a resolvable mesh, which means the capture
     // site (DrawSectionTL or any future TL-path) is missing the
-    // backendMeshHandle assignment.
+    // backendMeshResourceId assignment.
     const auto v = Poseidon::render::frame::DetectMissingMeshHandles(100, 1);
     REQUIRE(v.has_value());
     REQUIRE(std::string(v->ruleId) == "I-22");
