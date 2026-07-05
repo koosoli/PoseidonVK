@@ -1,4 +1,4 @@
-# CWR-CE - Koosoli Modernization Fork
+# CWR-CE - Modernization Fork
 
 _Modernization-focused fork of https://github.com/ofpisnotdead-com/CWR-CE_
 
