@@ -13,23 +13,51 @@ set(POSEIDON_VK_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/bootstrap_triangle.frag.glsl
 )
 
+set(POSEIDON_VK_GENERATED_SHADER_HEADERS)
+foreach(shader_file IN LISTS POSEIDON_VK_SHADER_SOURCES)
+    get_filename_component(shader_name "${shader_file}" NAME)
+    set(shader_header "${CMAKE_BINARY_DIR}/generated/PoseidonVK/Shaders/${shader_name}.hpp")
+    add_custom_command(
+        OUTPUT ${shader_header}
+        COMMAND ${CMAKE_COMMAND}
+            -DINPUT_FILE=${shader_file}
+            -DOUTPUT_FILE=${shader_header}
+            -P ${CMAKE_SOURCE_DIR}/cmake/GenerateShaderHeader.cmake
+        DEPENDS ${shader_file} ${CMAKE_SOURCE_DIR}/cmake/GenerateShaderHeader.cmake
+        VERBATIM
+    )
+    list(APPEND POSEIDON_VK_GENERATED_SHADER_HEADERS ${shader_header})
+endforeach()
+
+add_custom_target(PoseidonVKShaderHeaders DEPENDS ${POSEIDON_VK_GENERATED_SHADER_HEADERS})
+
 add_library(PoseidonVK STATIC
     ${POSEIDON_VK_SOURCES}
     ${POSEIDON_VK_HEADERS}
     ${POSEIDON_VK_SHADER_SOURCES}
+    ${POSEIDON_VK_GENERATED_SHADER_HEADERS}
 )
 
 set_source_files_properties(${POSEIDON_VK_SHADER_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
+add_dependencies(PoseidonVK PoseidonVKShaderHeaders)
 
 find_package(Vulkan REQUIRED)
+find_package(glslang CONFIG REQUIRED)
 
 target_link_libraries(PoseidonVK PUBLIC
     Poseidon
     Vulkan::Vulkan
 )
 
+target_link_libraries(PoseidonVK PRIVATE
+    glslang::glslang
+    glslang::glslang-default-resource-limits
+    glslang::SPIRV
+)
+
 target_include_directories(PoseidonVK PUBLIC
     ${CMAKE_SOURCE_DIR}/engine
+    ${CMAKE_BINARY_DIR}/generated
 )
 
 target_compile_definitions(PoseidonVK PRIVATE

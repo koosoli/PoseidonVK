@@ -49,6 +49,7 @@ class EngineVK : public EngineDummy
     bool CreateDevice();
     bool CreatePipelineLayout();
     bool CreateSwapchain();
+    bool CreateBootstrapPipeline();
     bool CreateCommandPool();
     bool CreateSyncObjects();
     bool RecordClearCommand(uint32_t imageIndex);
@@ -70,6 +71,7 @@ class EngineVK : public EngineDummy
     VkQueue _graphicsQueue = VK_NULL_HANDLE;
     VkQueue _presentQueue = VK_NULL_HANDLE;
     VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
+    VkPipeline _bootstrapPipeline = VK_NULL_HANDLE;
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D _swapchainExtent{};

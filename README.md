@@ -87,6 +87,8 @@ smoke-testable.
   pipeline bring-up.
 - [x] Add the first Vulkan bootstrap triangle shader sources and compile-check
   them under Vulkan GLSL rules.
+- [x] Draw a validation-clean bootstrap triangle through the Vulkan render-pass
+  path.
 - [ ] Feed camera, projection, fog, lighting, and per-draw constants into Vulkan.
 - [ ] Upload static and dynamic mesh buffers through backend-owned resources.
 - [ ] Implement texture creation, sampler state, mip use, and fallback behavior.

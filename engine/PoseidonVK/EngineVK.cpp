@@ -6,6 +6,9 @@
 #include <Poseidon/Foundation/Framework/Log.hpp>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -29,6 +32,12 @@ namespace Poseidon
 namespace
 {
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
+constexpr const char kBootstrapTriangleVertexShader[] =
+#include <PoseidonVK/Shaders/bootstrap_triangle.vert.glsl.hpp>
+    ;
+constexpr const char kBootstrapTriangleFragmentShader[] =
+#include <PoseidonVK/Shaders/bootstrap_triangle.frag.glsl.hpp>
+    ;
 
 bool HasInstanceExtension(const char* requiredExtension)
 {
@@ -205,6 +214,51 @@ bool RecreateSignaledFence(VkDevice device, VkFence& fence)
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     return vkCreateFence(device, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
 }
+
+void EnsureGlslangInitialized()
+{
+    static const bool initialized = []()
+    {
+        glslang::InitializeProcess();
+        return true;
+    }();
+    (void)initialized;
+}
+
+bool CompileBootstrapShader(const char* source, EShLanguage stage, std::vector<uint32_t>& spirv, std::string& error)
+{
+    EnsureGlslangInitialized();
+
+    glslang::TShader shader(stage);
+    const char* strings[] = {source};
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+
+    const EShMessages messages = static_cast<EShMessages>(EShMsgVulkanRules | EShMsgSpvRules);
+    if (!shader.parse(GetDefaultResources(), 450, false, messages))
+    {
+        error = shader.getInfoLog();
+        return false;
+    }
+
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(messages))
+    {
+        error = program.getInfoLog();
+        return false;
+    }
+
+    glslang::GlslangToSpv(*program.getIntermediate(stage), spirv);
+    if (spirv.empty())
+    {
+        error = "SPIR-V output is empty";
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 EngineVK::EngineVK(int width, int height, bool windowed, int bitsPerPixel, const std::string& displayMode)
@@ -295,7 +349,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     }
 
     if (!CreateInstance() || !CreateDebugMessenger() || !CreateSurface() || !PickPhysicalDevice() || !CreateDevice() ||
-        !CreatePipelineLayout() || !CreateCommandPool() || !CreateSwapchain() || !CreateSyncObjects())
+        !CreatePipelineLayout() || !CreateCommandPool() || !CreateSwapchain() || !CreateBootstrapPipeline() ||
+        !CreateSyncObjects())
     {
         Shutdown();
         return false;
@@ -755,6 +810,136 @@ bool EngineVK::CreateSwapchain()
     return true;
 }
 
+bool EngineVK::CreateBootstrapPipeline()
+{
+    std::vector<uint32_t> vertexSpirv;
+    std::vector<uint32_t> fragmentSpirv;
+    std::string error;
+    if (!CompileBootstrapShader(kBootstrapTriangleVertexShader, EShLangVertex, vertexSpirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: bootstrap vertex shader compile failed: {}", error);
+        return false;
+    }
+    if (!CompileBootstrapShader(kBootstrapTriangleFragmentShader, EShLangFragment, fragmentSpirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: bootstrap fragment shader compile failed: {}", error);
+        return false;
+    }
+
+    auto createShaderModule = [&](const std::vector<uint32_t>& spirv, const char* name, VkShaderModule& module)
+    {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = spirv.size() * sizeof(uint32_t);
+        createInfo.pCode = spirv.data();
+        const VkResult result = vkCreateShaderModule(_device, &createInfo, nullptr, &module);
+        if (result != VK_SUCCESS)
+        {
+            LOG_ERROR(Graphics, "Vulkan: vkCreateShaderModule failed for {}: {}", name, VkResultName(result));
+            return false;
+        }
+        SetObjectName(VK_OBJECT_TYPE_SHADER_MODULE, VulkanObjectHandle(module), name);
+        return true;
+    };
+
+    VkShaderModule vertexModule = VK_NULL_HANDLE;
+    VkShaderModule fragmentModule = VK_NULL_HANDLE;
+    if (!createShaderModule(vertexSpirv, "PoseidonVK Bootstrap Vertex Shader", vertexModule) ||
+        !createShaderModule(fragmentSpirv, "PoseidonVK Bootstrap Fragment Shader", fragmentModule))
+    {
+        if (vertexModule)
+            vkDestroyShaderModule(_device, vertexModule, nullptr);
+        if (fragmentModule)
+            vkDestroyShaderModule(_device, fragmentModule, nullptr);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertexModule;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragmentModule;
+    shaderStages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(_swapchainExtent.width);
+    viewport.height = static_cast<float>(_swapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = _swapchainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.layout = _pipelineLayout;
+    pipelineInfo.renderPass = _renderPass;
+    pipelineInfo.subpass = 0;
+
+    const VkResult result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                                      &_bootstrapPipeline);
+    vkDestroyShaderModule(_device, fragmentModule, nullptr);
+    vkDestroyShaderModule(_device, vertexModule, nullptr);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: vkCreateGraphicsPipelines failed: {}", VkResultName(result));
+        return false;
+    }
+
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_bootstrapPipeline),
+                  "PoseidonVK Bootstrap Triangle Pipeline");
+    LOG_INFO(Graphics, "Vulkan: bootstrap triangle pipeline created");
+    return true;
+}
+
 bool EngineVK::CreateSyncObjects()
 {
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -891,6 +1076,11 @@ bool EngineVK::RecordClearCommand(uint32_t imageIndex)
     renderPassInfo.pClearValues = &clearValue;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    if (_bootstrapPipeline)
+    {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _bootstrapPipeline);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    }
     vkCmdEndRenderPass(commandBuffer);
 
     EndDebugLabel(commandBuffer);
@@ -906,6 +1096,12 @@ bool EngineVK::RecordClearCommand(uint32_t imageIndex)
 
 void EngineVK::DestroySwapchain()
 {
+    if (_bootstrapPipeline)
+    {
+        vkDestroyPipeline(_device, _bootstrapPipeline, nullptr);
+        _bootstrapPipeline = VK_NULL_HANDLE;
+    }
+
     for (VkFramebuffer framebuffer : _framebuffers)
     {
         if (framebuffer)
@@ -956,7 +1152,7 @@ bool EngineVK::RecreateSwapchain()
 
     vkDeviceWaitIdle(_device);
     DestroySwapchain();
-    const bool recreated = CreateSwapchain() && CreateSyncObjects();
+    const bool recreated = CreateSwapchain() && CreateBootstrapPipeline() && CreateSyncObjects();
     _swapchainDirty = !recreated;
     return recreated;
 }
