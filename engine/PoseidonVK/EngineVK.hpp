@@ -7,6 +7,7 @@
 #include <Poseidon/Graphics/Shared/WindowMode.hpp>
 #include <vulkan/vulkan.h>
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -55,8 +56,10 @@ class EngineVK : public EngineDummy
     bool CreateFrameConstantsBuffer();
     bool CreateBootstrapVertexBuffer();
     bool CreateBootstrapIndexBuffer();
+    bool EnsureDrawConstantsBufferCapacity(std::size_t drawCount);
     bool CreateFrameDescriptorLayout();
     bool CreateFrameDescriptorSet();
+    void UpdateFrameDescriptorSet();
     bool CreatePipelineLayout();
     bool CreateSwapchain();
     bool CreateBootstrapPipeline();
@@ -67,8 +70,10 @@ class EngineVK : public EngineDummy
     void BeginDebugLabel(VkCommandBuffer commandBuffer, const char* name, float r, float g, float b) const;
     void EndDebugLabel(VkCommandBuffer commandBuffer) const;
     void UploadFrameConstants();
+    bool UploadDrawConstants();
     void DestroyFrameDescriptorResources();
     void DestroyFrameConstantsBuffer();
+    void DestroyDrawConstantsBuffer();
     void DestroyBootstrapVertexBuffer();
     void DestroyBootstrapIndexBuffer();
     void DestroySwapchain();
@@ -86,6 +91,7 @@ class EngineVK : public EngineDummy
     VkQueue _graphicsQueue = VK_NULL_HANDLE;
     VkQueue _presentQueue = VK_NULL_HANDLE;
     vk::BufferVK _frameConstantsBuffer;
+    vk::BufferVK _drawConstantsBuffer;
     vk::BufferVK _bootstrapVertexBuffer;
     vk::BufferVK _bootstrapIndexBuffer;
     VkDescriptorSetLayout _frameDescriptorSetLayout = VK_NULL_HANDLE;
@@ -118,6 +124,7 @@ class EngineVK : public EngineDummy
     bool _debugUtilsEnabled = false;
     vk::FrameConstantsVK _lastFrameConstants = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
+    std::size_t _drawConstantsCapacity = 0;
     VkClearColorValue _clearColor{{0.04f, 0.09f, 0.16f, 1.0f}};
     int _width = 1;
     int _height = 1;

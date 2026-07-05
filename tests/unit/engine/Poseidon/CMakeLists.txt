@@ -161,6 +161,7 @@ set(POSEIDON_TEST_SOURCES
     Graphics/test_window_placement.cpp
     Graphics/test_vulkan_bootstrap_shaders.cpp
     Graphics/test_vulkan_frame_constants.cpp
+    Graphics/test_vulkan_render_state.cpp
 )
 
 if(WIN32)

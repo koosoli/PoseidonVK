@@ -108,4 +108,9 @@ inline std::vector<DrawConstantsVK> BuildDrawConstants(const render::frame::Fram
     return constants;
 }
 
+inline constexpr std::size_t DrawConstantsByteSize(std::size_t drawCount) noexcept
+{
+    return sizeof(DrawConstantsVK) * drawCount;
+}
+
 } // namespace Poseidon::vk

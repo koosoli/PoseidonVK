@@ -175,6 +175,8 @@ TEST_CASE("Vulkan draw constants match std140-friendly layout", "[vulkan][draw-c
     STATIC_REQUIRE(offsetof(DrawConstantsVK, surface) == 128);
     STATIC_REQUIRE(offsetof(DrawConstantsVK, alphaRef) == 144);
     STATIC_REQUIRE(sizeof(DrawConstantsVK) == 160);
+    STATIC_REQUIRE(Poseidon::vk::DrawConstantsByteSize(0) == 0);
+    STATIC_REQUIRE(Poseidon::vk::DrawConstantsByteSize(3) == sizeof(DrawConstantsVK) * 3);
 }
 
 TEST_CASE("Vulkan draw constants preserve draw resource and descriptor state", "[vulkan][draw-constants]")

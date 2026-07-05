@@ -14,6 +14,7 @@
 #include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -382,7 +383,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
 
     if (!CreateInstance() || !CreateDebugMessenger() || !CreateSurface() || !PickPhysicalDevice() || !CreateDevice() ||
         !CreateFrameConstantsBuffer() || !CreateBootstrapVertexBuffer() || !CreateBootstrapIndexBuffer() ||
-        !CreateFrameDescriptorLayout() || !CreatePipelineLayout() || !CreateFrameDescriptorSet() ||
+        !EnsureDrawConstantsBufferCapacity(1) || !CreateFrameDescriptorLayout() || !CreatePipelineLayout() ||
+        !CreateFrameDescriptorSet() ||
         !CreateCommandPool() || !CreateSwapchain() || !CreateBootstrapPipeline() || !CreateSyncObjects())
     {
         Shutdown();
@@ -429,6 +431,7 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     _lastDrawConstants = vk::BuildDrawConstants(frame);
     _hasFrameConstants = true;
     UploadFrameConstants();
+    UploadDrawConstants();
 }
 
 bool EngineVK::CreateInstance()
@@ -704,6 +707,41 @@ bool EngineVK::CreateBootstrapIndexBuffer()
     return true;
 }
 
+bool EngineVK::EnsureDrawConstantsBufferCapacity(std::size_t drawCount)
+{
+    if (drawCount == 0 || _drawConstantsCapacity >= drawCount)
+        return true;
+
+    if (!_physicalDevice || !_device)
+        return false;
+
+    const VkDeviceSize byteSize = static_cast<VkDeviceSize>(vk::DrawConstantsByteSize(drawCount));
+    vkDeviceWaitIdle(_device);
+
+    vk::BufferVK replacement;
+    const VkResult result = vk::CreateHostVisibleBuffer(_physicalDevice, _device, byteSize,
+                                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, replacement);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: draw constants buffer creation failed: {}", VkResultName(result));
+        return false;
+    }
+
+    vk::DestroyBuffer(_device, _drawConstantsBuffer);
+    _drawConstantsBuffer = replacement;
+    _drawConstantsCapacity = drawCount;
+    std::vector<vk::DrawConstantsVK> cleared(drawCount);
+    vk::UploadMappedBuffer(_drawConstantsBuffer, cleared.data(), vk::DrawConstantsByteSize(cleared.size()));
+
+    SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_drawConstantsBuffer.buffer),
+                  "PoseidonVK Draw Constants Buffer");
+    SetObjectName(VK_OBJECT_TYPE_DEVICE_MEMORY, VulkanObjectHandle(_drawConstantsBuffer.memory),
+                  "PoseidonVK Draw Constants Memory");
+    if (_frameDescriptorSet)
+        UpdateFrameDescriptorSet();
+    return true;
+}
+
 bool EngineVK::CreateFrameDescriptorLayout()
 {
     VkDescriptorSetLayoutBinding frameConstantsBinding{};
@@ -712,10 +750,21 @@ bool EngineVK::CreateFrameDescriptorLayout()
     frameConstantsBinding.descriptorCount = 1;
     frameConstantsBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    VkDescriptorSetLayoutBinding drawConstantsBinding{};
+    drawConstantsBinding.binding = 1;
+    drawConstantsBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    drawConstantsBinding.descriptorCount = 1;
+    drawConstantsBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+        frameConstantsBinding,
+        drawConstantsBinding,
+    };
+
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    createInfo.bindingCount = 1;
-    createInfo.pBindings = &frameConstantsBinding;
+    createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
 
     const VkResult result = vkCreateDescriptorSetLayout(_device, &createInfo, nullptr, &_frameDescriptorSetLayout);
     if (result != VK_SUCCESS)
@@ -731,15 +780,16 @@ bool EngineVK::CreateFrameDescriptorLayout()
 
 bool EngineVK::CreateFrameDescriptorSet()
 {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = 1;
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+    };
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
 
     VkResult result = vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_descriptorPool);
     if (result != VK_SUCCESS)
@@ -766,26 +816,46 @@ bool EngineVK::CreateFrameDescriptorSet()
         return false;
     }
 
-    VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = _frameConstantsBuffer.buffer;
-    bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(vk::FrameConstantsVK);
-
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = _frameDescriptorSet;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    write.pBufferInfo = &bufferInfo;
-
-    vkUpdateDescriptorSets(_device, 1, &write, 0, nullptr);
+    UpdateFrameDescriptorSet();
 
     SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_POOL, VulkanObjectHandle(_descriptorPool),
                   "PoseidonVK Descriptor Pool");
     SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET, VulkanObjectHandle(_frameDescriptorSet),
                   "PoseidonVK Frame Descriptor Set");
     return true;
+}
+
+void EngineVK::UpdateFrameDescriptorSet()
+{
+    if (!_device || !_frameDescriptorSet || !_frameConstantsBuffer.buffer || !_drawConstantsBuffer.buffer)
+        return;
+
+    VkDescriptorBufferInfo frameBufferInfo{};
+    frameBufferInfo.buffer = _frameConstantsBuffer.buffer;
+    frameBufferInfo.offset = 0;
+    frameBufferInfo.range = sizeof(vk::FrameConstantsVK);
+
+    VkDescriptorBufferInfo drawBufferInfo{};
+    drawBufferInfo.buffer = _drawConstantsBuffer.buffer;
+    drawBufferInfo.offset = 0;
+    drawBufferInfo.range = _drawConstantsBuffer.size;
+
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = _frameDescriptorSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo = &frameBufferInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = _frameDescriptorSet;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &drawBufferInfo;
+
+    vkUpdateDescriptorSets(_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 bool EngineVK::CreateCommandPool()
@@ -1257,6 +1327,19 @@ void EngineVK::UploadFrameConstants()
     vk::UploadMappedBuffer(_frameConstantsBuffer, &_lastFrameConstants, sizeof(_lastFrameConstants));
 }
 
+bool EngineVK::UploadDrawConstants()
+{
+    if (_lastDrawConstants.empty())
+        return true;
+
+    if (!EnsureDrawConstantsBufferCapacity(_lastDrawConstants.size()))
+        return false;
+
+    vk::UploadMappedBuffer(_drawConstantsBuffer, _lastDrawConstants.data(),
+                           vk::DrawConstantsByteSize(_lastDrawConstants.size()));
+    return true;
+}
+
 void EngineVK::DestroyFrameDescriptorResources()
 {
     _frameDescriptorSet = VK_NULL_HANDLE;
@@ -1401,6 +1484,12 @@ void EngineVK::DestroyFrameConstantsBuffer()
     vk::DestroyBuffer(_device, _frameConstantsBuffer);
 }
 
+void EngineVK::DestroyDrawConstantsBuffer()
+{
+    vk::DestroyBuffer(_device, _drawConstantsBuffer);
+    _drawConstantsCapacity = 0;
+}
+
 void EngineVK::DestroyBootstrapVertexBuffer()
 {
     vk::DestroyBuffer(_device, _bootstrapVertexBuffer);
@@ -1525,6 +1614,7 @@ void EngineVK::Shutdown()
         }
         DestroyFrameDescriptorResources();
         DestroyFrameConstantsBuffer();
+        DestroyDrawConstantsBuffer();
         DestroyBootstrapVertexBuffer();
         DestroyBootstrapIndexBuffer();
         vkDestroyDevice(_device, nullptr);
