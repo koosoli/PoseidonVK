@@ -1,4 +1,4 @@
-# CWR-CE - Modernization Fork
+# Arma: Cold War Assault - Remastered - Community Edition (CWR-CE) - Modernization Fork
 
 _Modernization-focused fork of https://github.com/ofpisnotdead-com/CWR-CE_
 
