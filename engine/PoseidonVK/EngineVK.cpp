@@ -311,6 +311,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
 
     LOG_INFO(Graphics, "Vulkan: bootstrap initialized {}x{} mode={} graphics_queue={} present_queue={}", _width,
              _height, static_cast<int>(_windowMode), _graphicsQueueFamily, _presentQueueFamily);
+    LOG_WARN(Graphics, "Vulkan: scene rendering is not implemented yet; bootstrap currently presents a clear-color "
+                       "frame only");
     return true;
 }
 
