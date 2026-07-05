@@ -38,10 +38,12 @@ inline FrameStats CountFrameStats(const Frame& f)
 
         for (const auto& d : p.draws)
         {
-            if (d.mesh.vbo.id != 0)
-                vertexBuffers.insert(d.mesh.vbo.id);
-            if (d.mesh.ibo.id != 0)
-                indexBuffers.insert(d.mesh.ibo.id);
+            const std::uint32_t vboId = d.mesh.vbo.id != 0 ? d.mesh.vbo.id : d.mesh.id;
+            const std::uint32_t iboId = d.mesh.ibo.id != 0 ? d.mesh.ibo.id : d.mesh.id;
+            if (vboId != 0)
+                vertexBuffers.insert(vboId);
+            if (iboId != 0)
+                indexBuffers.insert(iboId);
 
             for (const auto& tex : d.textures)
             {

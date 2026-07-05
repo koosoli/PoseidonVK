@@ -103,6 +103,8 @@ BackendSourceCorpus ReadGL33Corpus()
     {
         if (!entry.is_regular_file())
             continue;
+        if (entry.path().filename() == "GLClear.hpp")
+            continue;
         const auto ext = entry.path().extension().string();
         if (ext != ".cpp" && ext != ".hpp")
             continue;

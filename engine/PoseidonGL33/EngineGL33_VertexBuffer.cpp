@@ -366,12 +366,15 @@ void EngineGL33::EmitDraw(const Poseidon::render::frame::Draw& d)
 
     // TEXTURE0 + TEXTURE1 binds.  The shared Draw carries backend-neutral
     // texture resource ids; GL33 resolves them to live GL texture handles here.
-    const unsigned int handle1 = d.textures[1].id == TextureGL33::FallbackResourceId()
-                                     ? _fallbackWhiteTex
-                                     : TextureGL33::ResolveHandle(d.textures[1].id);
-    const unsigned int handle0 = d.textures[0].id == TextureGL33::FallbackResourceId()
-                                     ? _fallbackWhiteTex
-                                     : TextureGL33::ResolveHandle(d.textures[0].id);
+    const auto resolveTextureHandle = [this](std::uint32_t resourceId)
+    {
+        if (resourceId == TextureGL33::FallbackResourceId())
+            return _fallbackWhiteTex;
+        const unsigned int handle = TextureGL33::ResolveHandle(resourceId);
+        return handle != 0 ? handle : _fallbackWhiteTex;
+    };
+    const unsigned int handle1 = resolveTextureHandle(d.textures[1].id);
+    const unsigned int handle0 = resolveTextureHandle(d.textures[0].id);
     if (handle1 != 0)
         GL33Bind::Tex2D(1, handle1);
     if (handle0 != 0)

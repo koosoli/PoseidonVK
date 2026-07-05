@@ -648,8 +648,10 @@ void EngineGL33::SetTexture(const TextureGL33* tex, const Poseidon::render::Lega
     // bound texture's residue, plus a LOW id=131204 warning).  Bind a 1x1
     // opaque-white sentinel instead — `tex.rgb * vertColor.rgb` with
     // tex=white yields vertColor, exactly matching the FF semantics.
-    const std::uint32_t resourceId = tex ? tex->GetResourceId() : TextureGL33::FallbackResourceId();
-    unsigned int handle = tex ? tex->GetHandle() : _fallbackWhiteTex;
+    const unsigned int textureHandle = tex ? tex->GetHandle() : 0;
+    const bool hasValidTexture = tex && textureHandle != 0;
+    const std::uint32_t resourceId = hasValidTexture ? tex->GetResourceId() : TextureGL33::FallbackResourceId();
+    const unsigned int handle = hasValidTexture ? textureHandle : _fallbackWhiteTex;
     // Snapshot the backend texture resource id into the next TL draw's record so
     // the frame layer can stay backend-neutral and GL33 can resolve at emit time.
     _currentDrawItem.backendTextureResourceId = resourceId;
@@ -702,7 +704,7 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
             unsigned int dh = detail ? detail->GetHandle() : 0;
             LOG_DEBUG(Graphics, "GL33: SetMultiTex DetailTex handle={} detail={}", dh, (void*)detail);
             boundHandle = dh ? dh : _fallbackWhiteTex;
-            boundResourceId = detail ? detail->GetResourceId() : TextureGL33::FallbackResourceId();
+            boundResourceId = (detail && dh) ? detail->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
         case GrassTex:
@@ -712,7 +714,7 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
                 _textBank->UseMipmap(grass, 0, 0);
             unsigned int gh = grass ? grass->GetHandle() : 0;
             boundHandle = gh ? gh : _fallbackWhiteTex;
-            boundResourceId = grass ? grass->GetResourceId() : TextureGL33::FallbackResourceId();
+            boundResourceId = (grass && gh) ? grass->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
         case SpecularTex:
@@ -722,7 +724,7 @@ void EngineGL33::SetMultiTexturing(VFormatSet format)
                 _textBank->UseMipmap(spec, 0, 0);
             unsigned int sh = spec ? spec->GetHandle() : 0;
             boundHandle = sh ? sh : _fallbackWhiteTex;
-            boundResourceId = spec ? spec->GetResourceId() : TextureGL33::FallbackResourceId();
+            boundResourceId = (spec && sh) ? spec->GetResourceId() : TextureGL33::FallbackResourceId();
             break;
         }
     }

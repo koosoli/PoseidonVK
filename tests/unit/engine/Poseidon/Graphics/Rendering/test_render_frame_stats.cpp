@@ -127,6 +127,32 @@ TEST_CASE("Frame/FrameStats: same numeric id in VBO and IBO roles counts separat
     REQUIRE(s.uniqueIndexBufferCount == 1);
 }
 
+TEST_CASE("Frame/FrameStats: mesh-only draws count as one VBO and IBO resource", "[render-frame][frame-stats]")
+{
+    v2::Frame f;
+    v2::Pass pass;
+
+    v2::Draw a;
+    a.mesh.id = 77;
+
+    v2::Draw b;
+    b.mesh.id = 77;
+
+    v2::Draw c;
+    c.mesh.id = 88;
+
+    pass.draws.push_back(a);
+    pass.draws.push_back(b);
+    pass.draws.push_back(c);
+    f.passes.push_back(pass);
+
+    const v2::FrameStats s = v2::CountFrameStats(f);
+
+    REQUIRE(s.drawCount == 3);
+    REQUIRE(s.uniqueVertexBufferCount == 2);
+    REQUIRE(s.uniqueIndexBufferCount == 2);
+}
+
 TEST_CASE("Frame/FrameStats: a pure fold never accumulates across frames", "[render-frame][frame-stats]")
 {
     auto s1 = makeMinimal();

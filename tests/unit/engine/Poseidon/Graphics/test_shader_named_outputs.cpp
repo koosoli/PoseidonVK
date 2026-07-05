@@ -93,14 +93,17 @@ std::vector<ShaderBlock> ExternalizedShaderBlocks()
         {"s_psFlatGLSL", "psFlat.glsl"},
         {"s_vsShadowGLSL", "vsShadow.glsl"},
         {"s_psShadowGLSL", "psShadow.glsl"},
+        {"s_vsShadowDepthGLSL", "shadowDepthVS.glsl"},
+        {"s_psShadowDepthGLSL", "shadowDepthFS.glsl"},
+        {"s_vsShadowDepthAlphaGLSL", "shadowDepthAlphaVS.glsl"},
+        {"s_psShadowDepthAlphaGLSL", "shadowDepthAlphaFS.glsl"},
     };
 
     std::vector<ShaderBlock> blocks;
     for (const auto& file : files)
     {
         const std::string source = ReadTextFile(gl33Dir / file.fileName);
-        if (!source.empty())
-            blocks.push_back({file.symbol, source});
+        blocks.push_back({file.symbol, source});
     }
     return blocks;
 }
@@ -145,9 +148,6 @@ CompileOutcome CompileGLSL(const std::string& src, EShLanguage stage)
     glslang::TShader shader(stage);
     const char* strings[1] = {src.c_str()};
     shader.setStrings(strings, 1);
-    shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientOpenGL, 330);
-    shader.setEnvClient(glslang::EShClientOpenGL, glslang::EShTargetOpenGL_450);
-    shader.setEnvTarget(glslang::EShTargetNone, glslang::EShTargetSpv_1_0);
     const TBuiltInResource* resources = GetDefaultResources();
     const EShMessages rules = EShMsgDefault;
     const bool ok = shader.parse(resources, 330, /*forwardCompatible*/ false, rules);

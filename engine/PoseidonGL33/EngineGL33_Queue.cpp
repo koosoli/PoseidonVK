@@ -258,13 +258,11 @@ void EngineGL33::ApplyPassState(TextureGL33* tex, int level, const Poseidon::ren
     ApplyPipeline(d);
     _pipelineVertexInput = previousVertexInput;
 
-    // IsTexBound is the sole gate: it reflects OnTexDeleted, so deleted handles
-    // that the driver recycles for new textures are never silently skipped.
-    unsigned int tHandle = tex ? tex->GetHandle() : 0;
-    if (!GL33Bind::IsTexBound(0, tHandle))
-    {
-        SetTexture(tex, spec);
-    }
+    // Always snapshot texture state for the current DrawItem.  GL33Bind::Tex2D
+    // still skips redundant GL binds internally, but the frame-emission path
+    // needs the backend resource id even when the live GL texture was already
+    // bound by a previous draw.
+    SetTexture(tex, spec);
 }
 
 void EngineGL33::QueuePrepareTriangle(const MipInfo& absMip, int specFlags)

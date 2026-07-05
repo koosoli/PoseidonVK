@@ -1,6 +1,48 @@
-# Arma: Cold War Assault - Remastered - Community Edition
+# CWR-CE - Koosoli Modernization Fork
 
-_based on https://github.com/bohemiainteractive/CWR_
+_Modernization-focused fork of https://github.com/ofpisnotdead-com/CWR-CE_
+
+This repository is `koosoli/CWR-CE`, a modernization-focused fork of the
+community CWR-CE codebase. The upstream community project and this fork have
+different goals. Upstream is focused on its own community-edition direction;
+this fork tries to stay compatible and easy to sync with upstream for as long as
+practical, while still allowing architectural divergence when modernization
+requires it.
+
+## What This Fork Is Trying To Do
+
+The long-term goal is to turn the Poseidon codebase into a more explicit,
+backend-neutral, modern rendering and asset platform while preserving as much
+legacy game compatibility as possible.
+
+Current priorities include:
+
+- Keeping GL33 working as the visual reference renderer.
+- Gradually removing backend-specific assumptions from shared engine code.
+- Preparing the engine for a future Vulkan backend.
+- Improving render-frame observability, validation, and diagnostics.
+- Building native support for modern asset workflows beside the legacy formats.
+- Staying compatible with upstream CWR-CE where it does not block those goals.
+
+This is not an official Bohemia Interactive product, and it is not intended to
+replace the upstream project. It is a separate experimental modernization fork.
+
+## AI-Assisted Development And Funding
+
+A lot of this work is AI-assisted, exploratory, and test-driven. In practice
+that means it can consume a large number of API tokens while auditing legacy
+systems, generating tests, reviewing regressions, and iterating on renderer
+changes. That makes the project unusually expensive to work on.
+
+If you want to support this fork, contributions are very welcome:
+
+- GitHub Sponsors: <https://github.com/sponsors/koosoli>
+- Buy Me a Coffee: <https://buymeacoffee.com/koosoli>
+
+Any money received with a note that it is for this project will be used entirely
+to pay for API calls and development costs for this fork.
+
+## Source, Brand, And Game Data
 
 This community repository continues the official engine and game source code (codename *Poseidon*) behind *Arma: Cold War Assault* — the game first released in 2001 as *Operation Flashpoint: Cold War Crisis*. That release launched Bohemia Interactive and began the technology lineage that later grew into Real Virtuality, Arma, and Enfusion. The code has been modernized to C++20, built with CMake and Clang, with cross-platform support for Windows x64 and Linux x64.
 Bohemia Interactive released it to the community that has kept this game alive for more than two decades — to study it, build on it, fix it, and create from it. Three things are worth keeping separate:
@@ -24,7 +66,9 @@ In short: the code is free software, the name is not, and the game data comes se
 
 ### Development Builds
 
-The quickest way to get the game or server executables is to download the CI builds: <https://ofpisnotdead-com.github.io/CWR-CE-builds/>
+The upstream project publishes CI builds at <https://ofpisnotdead-com.github.io/CWR-CE-builds/>.
+Those builds are useful for comparison, but they may not include changes from
+this fork. For this fork, building locally is the most reliable path.
 
 ### Build Requirements
 

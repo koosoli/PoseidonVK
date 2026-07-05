@@ -93,6 +93,11 @@ SceneDraw drawItemToSceneDraw(const DrawItem& item)
         out.indexBegin = item.firstIndex;
         out.indexCount = item.indexCount;
         out.mesh.id = item.backendMeshResourceId;
+        // Phase 0 only has a single backend mesh token for TL draws.  GL33's
+        // VertexBufferGL33 owns one VBO/IBO pair per token, so mirror the token
+        // into the typed roles until backends expose separate buffer ids.
+        out.mesh.vbo.id = item.backendMeshResourceId;
+        out.mesh.ibo.id = item.backendMeshResourceId;
         out.textures[0].id = item.backendTextureResourceId;
         out.textures[1].id = item.backendTexture1ResourceId;
     }
