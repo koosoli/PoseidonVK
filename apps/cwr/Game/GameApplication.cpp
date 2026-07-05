@@ -1457,6 +1457,7 @@ void GameApplication::RegisterGraphicsBackends()
 {
     RegisterDummyGraphicsBackend();
     RegisterGL33GraphicsBackend();
+    RegisterVulkanGraphicsBackend();
 }
 
 bool GameApplication::InitializeInput()

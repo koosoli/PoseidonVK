@@ -31,8 +31,9 @@ namespace Poseidon
 enum class GraphicsBackend
 {
     Dummy,     // Headless / server / harness — no rendering
-    GL33 = 33, // OpenGL 3.3 Core Profile with SDL3 window
-    Auto       // Automatically select the highest-priority available backend
+    GL33 = 33,  // OpenGL 3.3 Core Profile with SDL3 window
+    Vulkan = 50, // Vulkan renderer
+    Auto        // Automatically select the highest-priority available backend
 };
 
 // Engine creation parameters.
@@ -110,6 +111,7 @@ class GraphicsEngineFactory
 
 void RegisterDummyGraphicsBackend();
 void RegisterGL33GraphicsBackend();
+void RegisterVulkanGraphicsBackend();
 
 } // namespace Poseidon
 #endif // POSEIDON_GRAPHICS_GRAPHICSENGINEFACTORY_HPP

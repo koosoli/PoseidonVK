@@ -523,6 +523,7 @@ add_executable(PoseidonTests ${POSEIDON_TEST_SOURCES} ${POSEIDON_TEST_HEADERS})
 # Link against Poseidon (which now also owns the former Base and support payloads) and Catch2
 target_link_libraries(PoseidonTests PRIVATE
     PoseidonGL33
+    PoseidonVK
     Poseidon
     PoseidonOpenAL
     PoseidonFormats
@@ -553,7 +554,7 @@ if(WIN32)
 else()
     target_link_libraries(PoseidonTests PRIVATE
         -Wl,--start-group
-        PoseidonGL33 Poseidon PoseidonOpenAL
+        PoseidonGL33 PoseidonVK Poseidon PoseidonOpenAL
         -Wl,--end-group
         pthread dl
     )

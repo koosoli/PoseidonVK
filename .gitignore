@@ -25,6 +25,7 @@ imgui.ini
 /assets/
 /packages/
 /packages
+/referencesandinspirations/
 /tests/integration/missions/*/sound/
 !/tests/integration/missions/sound_preload.Demo/sound/
 !/tests/integration/missions/sound_preload.Demo/sound/say.wav

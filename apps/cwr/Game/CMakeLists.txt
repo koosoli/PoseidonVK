@@ -50,6 +50,7 @@ if(WIN32)
         GameBase
         Poseidon
         PoseidonGL33
+        PoseidonVK
         PoseidonOpenAL
         # Windows system libraries
         winmm.lib
@@ -62,6 +63,7 @@ else()
         -Wl,--start-group
         GameBase
         PoseidonGL33
+        PoseidonVK
         Poseidon
         PoseidonOpenAL
         -Wl,--end-group

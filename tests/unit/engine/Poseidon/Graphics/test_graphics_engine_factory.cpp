@@ -207,3 +207,22 @@ TEST_CASE("GraphicsEngineFactory resolves explicit backend codes", "[graphics][f
             reinterpret_cast<Engine*>(&g_primarySentinel));
     REQUIRE(GraphicsEngineFactory::IsBackendAvailable(GraphicsBackend::Auto));
 }
+
+TEST_CASE("GraphicsEngineFactory exposes Vulkan as registered but unavailable during Phase 1 stub",
+          "[graphics][factory][vulkan]")
+{
+    ResetTestState();
+
+    Poseidon::RegisterVulkanGraphicsBackend();
+
+    const auto registered = GraphicsEngineFactory::EnumerateRegistered();
+    REQUIRE(registered.size() == 1);
+    CHECK(std::string(registered[0].codeName) == "vulkan");
+    CHECK(std::string(registered[0].displayName) == "Vulkan");
+    CHECK_FALSE(registered[0].isAvailable);
+
+    const GraphicsEngineParams params;
+    CHECK(GraphicsEngineFactory::Create("vulkan", params) == nullptr);
+    CHECK_FALSE(GraphicsEngineFactory::IsBackendAvailable(GraphicsBackend::Vulkan));
+    CHECK(std::string(GraphicsEngineFactory::GetBackendName(GraphicsBackend::Vulkan)) == "Vulkan");
+}

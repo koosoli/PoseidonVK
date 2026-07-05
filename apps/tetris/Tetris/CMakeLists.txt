@@ -51,12 +51,12 @@ target_include_directories(PoseidonTetris PRIVATE
 
 if(WIN32)
     target_link_libraries(PoseidonTetris PRIVATE
-        GameBase Poseidon PoseidonGL33 PoseidonOpenAL
+        GameBase Poseidon PoseidonGL33 PoseidonVK PoseidonOpenAL
         winmm.lib version.lib ws2_32.lib legacy_stdio_definitions.lib
     )
 else()
     target_link_libraries(PoseidonTetris PRIVATE
-        -Wl,--start-group GameBase PoseidonGL33 Poseidon PoseidonOpenAL -Wl,--end-group
+        -Wl,--start-group GameBase PoseidonGL33 PoseidonVK Poseidon PoseidonOpenAL -Wl,--end-group
         pthread dl
     )
 endif()

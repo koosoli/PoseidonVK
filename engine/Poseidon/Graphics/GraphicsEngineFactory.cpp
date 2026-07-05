@@ -82,6 +82,8 @@ const char* CodeForBackend(GraphicsBackend backend)
             return "dummy";
         case GraphicsBackend::GL33:
             return "gl33";
+        case GraphicsBackend::Vulkan:
+            return "vulkan";
         case GraphicsBackend::Auto:
             break;
     }
@@ -210,6 +212,8 @@ const char* GraphicsEngineFactory::GetBackendName(GraphicsBackend backend)
             return "Dummy (Headless)";
         case GraphicsBackend::GL33:
             return "OpenGL 3.3 Core (SDL3)";
+        case GraphicsBackend::Vulkan:
+            return "Vulkan";
         case GraphicsBackend::Auto:
             return "Auto (Best Available)";
     }

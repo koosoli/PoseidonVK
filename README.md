@@ -64,9 +64,10 @@ smoke-testable.
 
 ### Phase 1 - Minimal Vulkan Backend
 
-- [ ] Add a `PoseidonVK` target.
-- [ ] Register a `vulkan` backend in the existing backend factory.
-- [ ] Make `--render vulkan` report availability and failure reasons clearly.
+- [x] Add a `PoseidonVK` target.
+- [x] Register a `vulkan` backend in the existing backend factory.
+- [x] Make `--render vulkan` parse cleanly and expose the registered
+  unavailable stub.
 - [ ] Create a Vulkan instance, device, surface, swapchain, and debug messenger.
 - [ ] Open a window, clear to a known color, present, resize, and shut down
   cleanly under validation layers.
