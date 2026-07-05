@@ -8,22 +8,30 @@
 namespace Poseidon::vk
 {
 
-// Per-draw world transform for the Vulkan scene pipeline. Pushed at offset 0
-// of the scene pipeline's push-constant range. Sized to a single mat4 (64 B)
-// so it stays well under the 128 B minimum guaranteed by Vulkan for graphics
-// stages, leaving room for future per-draw flags without a layout migration.
+// Per-draw push constants for the Vulkan scene pipeline. Pushed at offset 0 of
+// the scene pipeline's push-constant range.
+//
+//   world             — fallback world matrix used when no DrawConstants SSBO
+//                       entry is available (bring-up / no frame plan yet).
+//   useDrawConstants  — non-zero when the host uploaded at least one entry to
+//                       the DrawConstants SSBO at binding 1; the vertex shader
+//                       then prefers draws[0].world over the fallback.
+//
+// 16-aligned so the C++ layout matches the GLSL std430 push_constant block.
 struct alignas(16) ScenePushConstantsVK
 {
     GfxMatrix world = {};
+    std::uint32_t useDrawConstants = 0;
 };
 
 inline constexpr std::uint32_t kScenePushConstantsSize =
     static_cast<std::uint32_t>(sizeof(ScenePushConstantsVK));
 
-inline ScenePushConstantsVK BuildScenePushConstants(const GfxMatrix& world) noexcept
+inline ScenePushConstantsVK BuildScenePushConstants(const GfxMatrix& world, bool useDrawConstants) noexcept
 {
     ScenePushConstantsVK constants;
     constants.world = world;
+    constants.useDrawConstants = useDrawConstants ? 1u : 0u;
     return constants;
 }
 
@@ -38,8 +46,9 @@ inline ScenePushConstantsVK BuildIdentityScenePushConstants() noexcept
 }
 
 static_assert(offsetof(ScenePushConstantsVK, world) == 0);
-static_assert(sizeof(ScenePushConstantsVK) == 64);
-static_assert(kScenePushConstantsSize == 64);
+static_assert(offsetof(ScenePushConstantsVK, useDrawConstants) == 64);
+static_assert(sizeof(ScenePushConstantsVK) == 80);
+static_assert(kScenePushConstantsSize == 80);
 static_assert(sizeof(ScenePushConstantsVK) <= 128, "Scene push constants must stay under the 128 B minimum");
 
 } // namespace Poseidon::vk

@@ -1795,6 +1795,11 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
     }
     if (_scenePipeline)
     {
+        // The vertex shader can read per-draw world matrices from the
+        // DrawConstants SSBO (binding 1), but the bring-up quad lives in NDC,
+        // so it must use the identity fallback to stay visible. useDrawConstants
+        // stays false until the pipeline draws real world-space meshes; the SSBO
+        // read path itself is implemented and compile-checked in the shader.
         const vk::ScenePushConstantsVK sceneConstants = vk::BuildIdentityScenePushConstants();
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipeline);

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
 
 #include <glslang/Public/ResourceLimits.h>
@@ -117,6 +118,25 @@ TEST_CASE("Vulkan scene shaders share the frame descriptor contract", "[vulkan][
     CHECK(fragmentSource.find("layout(set = 0, binding = 0, std140) uniform FrameConstants") != std::string::npos);
 }
 
+TEST_CASE("Vulkan scene vertex shader reads per-draw constants from the SSBO", "[vulkan][scene-shaders]")
+{
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const std::string vertexSource = ReadTextFile(shaderDir / "scene.vert.glsl");
+
+    CHECK(vertexSource.find("layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer") !=
+          std::string::npos);
+    CHECK(vertexSource.find("mat4 world;") != std::string::npos);
+    CHECK(vertexSource.find("drawConstants.draws[0].world") != std::string::npos);
+}
+
+TEST_CASE("Vulkan DrawConstants SSBO element stride matches the shader struct", "[vulkan][scene-shaders]")
+{
+    // The shader declares DrawConstants as a std430 SSBO element; its size must
+    // match Poseidon::vk::DrawConstantsVK so draws[0].world reads the right bytes.
+    STATIC_REQUIRE(sizeof(Poseidon::vk::DrawConstantsVK) == 160);
+    STATIC_REQUIRE(offsetof(Poseidon::vk::DrawConstantsVK, world) == 0);
+}
+
 TEST_CASE("Vulkan scene shaders declare the world push constant", "[vulkan][scene-shaders]")
 {
     const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
@@ -131,7 +151,8 @@ TEST_CASE("Vulkan scene push constants match the shader contract", "[vulkan][sce
     using Poseidon::vk::ScenePushConstantsVK;
 
     STATIC_REQUIRE(offsetof(ScenePushConstantsVK, world) == 0);
-    STATIC_REQUIRE(sizeof(ScenePushConstantsVK) == 64);
+    STATIC_REQUIRE(offsetof(ScenePushConstantsVK, useDrawConstants) == 64);
+    STATIC_REQUIRE(sizeof(ScenePushConstantsVK) == 80);
     STATIC_REQUIRE(Poseidon::vk::kScenePushConstantsSize == sizeof(ScenePushConstantsVK));
 }
 
@@ -145,6 +166,7 @@ TEST_CASE("Vulkan scene push constants build identity and world matrices", "[vul
         CHECK(constants.world._44 == 1.0f);
         CHECK(constants.world._12 == 0.0f);
         CHECK(constants.world._21 == 0.0f);
+        CHECK(constants.useDrawConstants == 0u);
     }
     {
         Poseidon::GfxMatrix world;
@@ -152,10 +174,12 @@ TEST_CASE("Vulkan scene push constants build identity and world matrices", "[vul
         world._22 = 3.0f;
         world._33 = 4.0f;
         world._44 = 5.0f;
-        const Poseidon::vk::ScenePushConstantsVK constants = Poseidon::vk::BuildScenePushConstants(world);
+        const Poseidon::vk::ScenePushConstantsVK constants =
+            Poseidon::vk::BuildScenePushConstants(world, true);
         CHECK(constants.world._11 == 2.0f);
         CHECK(constants.world._22 == 3.0f);
         CHECK(constants.world._33 == 4.0f);
         CHECK(constants.world._44 == 5.0f);
+        CHECK(constants.useDrawConstants == 1u);
     }
 }
