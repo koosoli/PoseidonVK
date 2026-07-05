@@ -295,7 +295,7 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     }
 
     if (!CreateInstance() || !CreateDebugMessenger() || !CreateSurface() || !PickPhysicalDevice() || !CreateDevice() ||
-        !CreateCommandPool() || !CreateSwapchain() || !CreateSyncObjects())
+        !CreatePipelineLayout() || !CreateCommandPool() || !CreateSwapchain() || !CreateSyncObjects())
     {
         Shutdown();
         return false;
@@ -520,6 +520,22 @@ bool EngineVK::CreateDevice()
     SetObjectName(VK_OBJECT_TYPE_QUEUE, VulkanObjectHandle(_graphicsQueue), "PoseidonVK Graphics Queue");
     if (_presentQueue != _graphicsQueue)
         SetObjectName(VK_OBJECT_TYPE_QUEUE, VulkanObjectHandle(_presentQueue), "PoseidonVK Present Queue");
+    return true;
+}
+
+bool EngineVK::CreatePipelineLayout()
+{
+    VkPipelineLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    const VkResult result = vkCreatePipelineLayout(_device, &createInfo, nullptr, &_pipelineLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: vkCreatePipelineLayout failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_pipelineLayout),
+                  "PoseidonVK Bootstrap Pipeline Layout");
     return true;
 }
 
@@ -1037,6 +1053,11 @@ void EngineVK::Shutdown()
         {
             vkDestroyCommandPool(_device, _commandPool, nullptr);
             _commandPool = VK_NULL_HANDLE;
+        }
+        if (_pipelineLayout)
+        {
+            vkDestroyPipelineLayout(_device, _pipelineLayout, nullptr);
+            _pipelineLayout = VK_NULL_HANDLE;
         }
         vkDestroyDevice(_device, nullptr);
         _device = VK_NULL_HANDLE;

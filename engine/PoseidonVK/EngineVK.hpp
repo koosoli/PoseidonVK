@@ -47,6 +47,7 @@ class EngineVK : public EngineDummy
     bool CreateSurface();
     bool PickPhysicalDevice();
     bool CreateDevice();
+    bool CreatePipelineLayout();
     bool CreateSwapchain();
     bool CreateCommandPool();
     bool CreateSyncObjects();
@@ -68,6 +69,7 @@ class EngineVK : public EngineDummy
     VkDevice _device = VK_NULL_HANDLE;
     VkQueue _graphicsQueue = VK_NULL_HANDLE;
     VkQueue _presentQueue = VK_NULL_HANDLE;
+    VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D _swapchainExtent{};

@@ -159,6 +159,7 @@ set(POSEIDON_TEST_SOURCES
     Graphics/test_jpg_import.cpp
     Graphics/test_window_metrics.cpp
     Graphics/test_window_placement.cpp
+    Graphics/test_vulkan_bootstrap_shaders.cpp
     Graphics/test_vulkan_frame_constants.cpp
 )
 
@@ -538,6 +539,7 @@ find_package(glslang CONFIG REQUIRED)
 target_link_libraries(PoseidonTests PRIVATE
     glslang::glslang
     glslang::glslang-default-resource-limits
+    glslang::SPIRV
 )
 
 # zstd — test_mod_archive.cpp generates multi-chunk zstd frames at test time to

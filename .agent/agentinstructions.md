@@ -60,6 +60,12 @@ the expected visible behavior, and the most likely regression signs for the
 recent change. Avoid vague requests like "please test it"; give a compact
 checklist tied to the code that changed.
 
+For Vulkan bootstrap smoke tests, be explicit about the current renderer stage.
+Until Vulkan raster parity is implemented, `--render vulkan` may show only a
+stable clear-color window while game simulation or audio continues. Do not ask
+the user to expect normal scene rendering from Vulkan until the runtime pipeline,
+mesh, texture, and draw paths have actually landed.
+
 ## Regression-Proof Engineering Guidelines
 
 1. **Test-backed iteration:** Extend tests when changing seams, backend-neutral

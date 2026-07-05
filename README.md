@@ -83,6 +83,10 @@ smoke-testable.
   range, world rect, and fog values.
 - [x] Create swapchain image views, render pass, and framebuffers, then clear
   through the render-pass path.
+- [x] Add the first empty Vulkan pipeline layout for bootstrap graphics
+  pipeline bring-up.
+- [x] Add the first Vulkan bootstrap triangle shader sources and compile-check
+  them under Vulkan GLSL rules.
 - [ ] Feed camera, projection, fog, lighting, and per-draw constants into Vulkan.
 - [ ] Upload static and dynamic mesh buffers through backend-owned resources.
 - [ ] Implement texture creation, sampler state, mip use, and fallback behavior.

@@ -8,10 +8,18 @@ set(POSEIDON_VK_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsBackendVK.hpp
 )
 
+set(POSEIDON_VK_SHADER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/bootstrap_triangle.vert.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/bootstrap_triangle.frag.glsl
+)
+
 add_library(PoseidonVK STATIC
     ${POSEIDON_VK_SOURCES}
     ${POSEIDON_VK_HEADERS}
+    ${POSEIDON_VK_SHADER_SOURCES}
 )
+
+set_source_files_properties(${POSEIDON_VK_SHADER_SOURCES} PROPERTIES HEADER_FILE_ONLY ON)
 
 find_package(Vulkan REQUIRED)
 
