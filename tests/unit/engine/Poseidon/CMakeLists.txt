@@ -159,6 +159,7 @@ set(POSEIDON_TEST_SOURCES
     Graphics/test_jpg_import.cpp
     Graphics/test_window_metrics.cpp
     Graphics/test_window_placement.cpp
+    Graphics/test_vulkan_frame_constants.cpp
 )
 
 if(WIN32)

@@ -79,6 +79,8 @@ smoke-testable.
 
 - [x] Add validation/RenderDoc-friendly names and labels to Vulkan bootstrap
   objects and the clear-present command path.
+- [x] Add a tested Vulkan frame-constants bridge for camera, viewport, clip
+  range, world rect, and fog values.
 - [ ] Feed camera, projection, fog, lighting, and per-draw constants into Vulkan.
 - [ ] Upload static and dynamic mesh buffers through backend-owned resources.
 - [ ] Implement texture creation, sampler state, mip use, and fallback behavior.
