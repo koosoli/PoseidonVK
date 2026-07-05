@@ -218,9 +218,8 @@ TEST_CASE("GraphicsEngineFactory exposes Vulkan registration during Phase 1 stub
     REQUIRE(registered.size() == 1);
     CHECK(std::string(registered[0].codeName) == "vulkan");
     CHECK(std::string(registered[0].displayName) == "Vulkan");
+    CHECK(registered[0].priority == 50);
     CHECK(registered[0].isAvailable == GraphicsEngineFactory::IsBackendAvailable(GraphicsBackend::Vulkan));
 
-    const GraphicsEngineParams params;
-    CHECK(GraphicsEngineFactory::Create("vulkan", params) == nullptr);
     CHECK(std::string(GraphicsEngineFactory::GetBackendName(GraphicsBackend::Vulkan)) == "Vulkan");
 }

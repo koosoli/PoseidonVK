@@ -1,5 +1,6 @@
 #include <PoseidonVK/GraphicsBackendVK.hpp>
 
+#include <PoseidonVK/EngineVK.hpp>
 #include <Poseidon/Graphics/GraphicsEngineFactory.hpp>
 #include <Poseidon/Graphics/Core/Engine.hpp>
 #include <Poseidon/Foundation/Framework/Log.hpp>
@@ -146,8 +147,8 @@ void LogVulkanProbeOnce()
     if (probe.loaderReady)
     {
         LOG_INFO(Graphics,
-                 "Vulkan: loader available (api={}, instance_extensions={}, physical_devices={}); backend creation "
-                 "is not implemented yet",
+                 "Vulkan: loader available (api={}, instance_extensions={}, physical_devices={}); bootstrap renderer "
+                 "can initialize when SDL exposes Vulkan window support",
                  VersionString(probe.apiVersion), probe.instanceExtensionCount, probe.physicalDeviceCount);
     }
     else
@@ -156,17 +157,23 @@ void LogVulkanProbeOnce()
     }
 }
 
-Poseidon::Engine* CreateVulkanBackend(const Poseidon::GraphicsEngineParams&)
+Poseidon::Engine* CreateVulkanBackend(const Poseidon::GraphicsEngineParams& params)
 {
     LogVulkanProbeOnce();
-    LOG_WARN(Graphics, "Vulkan renderer creation is not implemented yet");
-    return nullptr;
+    Poseidon::EngineVK* engine =
+        new Poseidon::EngineVK(params.width, params.height, params.useWindow, params.bitsPerPixel, params.displayMode);
+    if (!engine->IsInitialized())
+    {
+        delete engine;
+        return nullptr;
+    }
+    return engine;
 }
 
 bool IsVulkanAvailable()
 {
     LogVulkanProbeOnce();
-    return false;
+    return GetVulkanProbe().loaderReady;
 }
 
 } // namespace
@@ -179,7 +186,7 @@ void RegisterVulkanGraphicsBackend()
     GraphicsEngineFactory::Register(GraphicsBackendDescriptor{
         "vulkan",
         "Vulkan",
-        200,
+        50,
         &CreateVulkanBackend,
         &IsVulkanAvailable,
     });
