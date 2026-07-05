@@ -1,6 +1,7 @@
 #pragma once
 
 #include <PoseidonVK/BufferVK.hpp>
+#include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/FrameConstantsVK.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
 #include <Poseidon/Graphics/Shared/WindowMode.hpp>
@@ -116,6 +117,7 @@ class EngineVK : public EngineDummy
     bool _validationEnabled = false;
     bool _debugUtilsEnabled = false;
     vk::FrameConstantsVK _lastFrameConstants = {};
+    std::vector<vk::DrawConstantsVK> _lastDrawConstants;
     VkClearColorValue _clearColor{{0.04f, 0.09f, 0.16f, 1.0f}};
     int _width = 1;
     int _height = 1;

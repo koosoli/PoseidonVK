@@ -14,11 +14,13 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
 {
     mat4 view;
     mat4 projection;
+    mat4 sunMatrix;
     vec4 viewport;
     vec4 clipPlanes;
     vec4 worldRect;
     vec4 fogParams;
     vec4 fogColor;
+    vec4 lightingParams;
 } frame;
 
 void main()

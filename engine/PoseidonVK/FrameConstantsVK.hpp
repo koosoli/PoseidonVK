@@ -12,22 +12,26 @@ struct FrameConstantsVK
 {
     GfxMatrix view = {};
     GfxMatrix projection = {};
+    GfxMatrix sunMatrix = {};
     float viewport[4] = {};   // x, y, width, height
     float clipPlanes[4] = {}; // near, far, world-left, world-top
     float worldRect[4] = {};  // left, top, right, bottom
     float fogParams[4] = {};  // start, end, inverse range, enabled
     float fogColor[4] = {};   // rgba, normalized
+    float lightingParams[4] = {}; // sun enabled, reserved
 };
 
 static_assert(sizeof(GfxMatrix) == 64);
 static_assert(offsetof(FrameConstantsVK, view) == 0);
 static_assert(offsetof(FrameConstantsVK, projection) == 64);
-static_assert(offsetof(FrameConstantsVK, viewport) == 128);
-static_assert(offsetof(FrameConstantsVK, clipPlanes) == 144);
-static_assert(offsetof(FrameConstantsVK, worldRect) == 160);
-static_assert(offsetof(FrameConstantsVK, fogParams) == 176);
-static_assert(offsetof(FrameConstantsVK, fogColor) == 192);
-static_assert(sizeof(FrameConstantsVK) == 208);
+static_assert(offsetof(FrameConstantsVK, sunMatrix) == 128);
+static_assert(offsetof(FrameConstantsVK, viewport) == 192);
+static_assert(offsetof(FrameConstantsVK, clipPlanes) == 208);
+static_assert(offsetof(FrameConstantsVK, worldRect) == 224);
+static_assert(offsetof(FrameConstantsVK, fogParams) == 240);
+static_assert(offsetof(FrameConstantsVK, fogColor) == 256);
+static_assert(offsetof(FrameConstantsVK, lightingParams) == 272);
+static_assert(sizeof(FrameConstantsVK) == 288);
 
 inline float ChannelToFloat(std::uint32_t value) noexcept
 {
@@ -39,6 +43,7 @@ inline FrameConstantsVK BuildFrameConstants(const render::frame::Frame& frame) n
     FrameConstantsVK constants;
     constants.view = frame.camera.view;
     constants.projection = frame.camera.projection;
+    constants.sunMatrix = frame.sunMatrix;
 
     constants.viewport[0] = static_cast<float>(frame.camera.viewport.x);
     constants.viewport[1] = static_cast<float>(frame.camera.viewport.y);
@@ -66,6 +71,7 @@ inline FrameConstantsVK BuildFrameConstants(const render::frame::Frame& frame) n
     constants.fogColor[1] = ChannelToFloat(rgba >> 16);
     constants.fogColor[2] = ChannelToFloat(rgba >> 8);
     constants.fogColor[3] = ChannelToFloat(rgba);
+    constants.lightingParams[0] = frame.sunEnabled ? 1.0f : 0.0f;
     return constants;
 }
 

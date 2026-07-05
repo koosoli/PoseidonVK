@@ -2,6 +2,7 @@
 
 #include <PoseidonVK/BootstrapPushConstantsVK.hpp>
 #include <PoseidonVK/BufferVK.hpp>
+#include <PoseidonVK/DrawConstantsVK.hpp>
 #include <Poseidon/Core/Application.hpp>
 #include <Poseidon/Graphics/Shared/WindowPlacement.hpp>
 #include <Poseidon/Foundation/Framework/AppFrame.hpp>
@@ -425,6 +426,7 @@ void EngineVK::NextFrame()
 void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
 {
     _lastFrameConstants = vk::BuildFrameConstants(frame);
+    _lastDrawConstants = vk::BuildDrawConstants(frame);
     _hasFrameConstants = true;
     UploadFrameConstants();
 }

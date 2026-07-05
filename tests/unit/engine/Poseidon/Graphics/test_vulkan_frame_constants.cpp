@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <PoseidonVK/BufferVK.hpp>
+#include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/FrameConstantsVK.hpp>
 #include <Poseidon/Graphics/Rendering/Frame/BuildFrame.hpp>
 
@@ -32,6 +33,11 @@ frame::Frame makeFrame()
     inputs.camera.projection._22 = 6.0f;
     inputs.camera.projection._33 = 7.0f;
     inputs.camera.projection._44 = 8.0f;
+    inputs.sunMatrix._11 = 9.0f;
+    inputs.sunMatrix._22 = 10.0f;
+    inputs.sunMatrix._33 = 11.0f;
+    inputs.sunMatrix._44 = 12.0f;
+    inputs.sunEnabled = true;
     inputs.fogStart = 25.0f;
     inputs.fogEnd = 125.0f;
     inputs.fogColorRGBA = 0x336699ccu;
@@ -47,12 +53,14 @@ TEST_CASE("Vulkan frame constants match std140 descriptor layout", "[vulkan][fra
     STATIC_REQUIRE(sizeof(Poseidon::GfxMatrix) == 64);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, view) == 0);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, projection) == 64);
-    STATIC_REQUIRE(offsetof(FrameConstantsVK, viewport) == 128);
-    STATIC_REQUIRE(offsetof(FrameConstantsVK, clipPlanes) == 144);
-    STATIC_REQUIRE(offsetof(FrameConstantsVK, worldRect) == 160);
-    STATIC_REQUIRE(offsetof(FrameConstantsVK, fogParams) == 176);
-    STATIC_REQUIRE(offsetof(FrameConstantsVK, fogColor) == 192);
-    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 208);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, sunMatrix) == 128);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, viewport) == 192);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, clipPlanes) == 208);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, worldRect) == 224);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, fogParams) == 240);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, fogColor) == 256);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, lightingParams) == 272);
+    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 288);
 }
 
 TEST_CASE("Vulkan mapped buffer upload copies frame constants bytes", "[vulkan][frame-constants]")
@@ -91,6 +99,10 @@ TEST_CASE("Vulkan frame constants preserve frame camera matrices", "[vulkan][fra
     CHECK(constants.projection._22 == 6.0f);
     CHECK(constants.projection._33 == 7.0f);
     CHECK(constants.projection._44 == 8.0f);
+    CHECK(constants.sunMatrix._11 == 9.0f);
+    CHECK(constants.sunMatrix._22 == 10.0f);
+    CHECK(constants.sunMatrix._33 == 11.0f);
+    CHECK(constants.sunMatrix._44 == 12.0f);
 }
 
 TEST_CASE("Vulkan frame constants expose viewport and world rect", "[vulkan][frame-constants]")
@@ -123,6 +135,7 @@ TEST_CASE("Vulkan frame constants normalize RGBA fog color", "[vulkan][frame-con
     CHECK(constants.fogColor[1] == Catch::Approx(0x66 / 255.0f));
     CHECK(constants.fogColor[2] == Catch::Approx(0x99 / 255.0f));
     CHECK(constants.fogColor[3] == Catch::Approx(0xcc / 255.0f));
+    CHECK(constants.lightingParams[0] == 1.0f);
 }
 
 TEST_CASE("Vulkan frame constants disable fog for non-positive ranges", "[vulkan][frame-constants]")
@@ -136,4 +149,110 @@ TEST_CASE("Vulkan frame constants disable fog for non-positive ranges", "[vulkan
 
     CHECK(constants.fogParams[2] == 0.0f);
     CHECK(constants.fogParams[3] == 0.0f);
+}
+
+TEST_CASE("Vulkan frame constants expose disabled sun state", "[vulkan][frame-constants]")
+{
+    frame::SceneInputs inputs;
+    inputs.flags.hudEnabled = false;
+    inputs.sunEnabled = false;
+
+    const Poseidon::vk::FrameConstantsVK constants = Poseidon::vk::BuildFrameConstants(frame::BuildFrame(inputs));
+
+    CHECK(constants.lightingParams[0] == 0.0f);
+}
+
+TEST_CASE("Vulkan draw constants match std140-friendly layout", "[vulkan][draw-constants]")
+{
+    using Poseidon::vk::DrawConstantsVK;
+
+    STATIC_REQUIRE(sizeof(Poseidon::GfxMatrix) == 64);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, world) == 0);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, textureIds) == 64);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, meshId) == 80);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, depth) == 96);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, frontFace) == 112);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, surface) == 128);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, alphaRef) == 144);
+    STATIC_REQUIRE(sizeof(DrawConstantsVK) == 160);
+}
+
+TEST_CASE("Vulkan draw constants preserve draw resource and descriptor state", "[vulkan][draw-constants]")
+{
+    frame::Draw draw;
+    draw.world._11 = 2.0f;
+    draw.world._44 = 3.0f;
+    draw.mesh.id = 42;
+    draw.indexBegin = 5;
+    draw.indexCount = 18;
+    draw.textures[0].id = 100;
+    draw.textures[1].id = 101;
+    draw.descriptor.pass = Poseidon::render::PassKind::WorldTransparent;
+    draw.descriptor.depth = Poseidon::render::DepthMode::ReadOnly;
+    draw.descriptor.blend = Poseidon::render::BlendMode::AlphaBlend;
+    draw.descriptor.fog = Poseidon::render::FogMode::AlphaFog;
+    draw.descriptor.cull = Poseidon::render::CullMode::None;
+    draw.descriptor.frontFace = Poseidon::render::FrontFaceMode::CCW;
+    draw.descriptor.alpha = Poseidon::render::AlphaMode::Blend;
+    draw.descriptor.lighting = Poseidon::render::LightingMode::Unlit;
+    draw.descriptor.texGen = Poseidon::render::TexGenMode::Detail;
+    draw.descriptor.surface = Poseidon::render::SurfaceMode::OnSurface;
+    draw.descriptor.sampler.filter = Poseidon::render::SamplerFilter::Point;
+    draw.descriptor.sampler.clampU = true;
+    draw.descriptor.sampler.clampV = true;
+    draw.descriptor.shader = Poseidon::render::ShaderFamily::Detail;
+    draw.descriptor.alphaRef = 127;
+    draw.descriptor.stencilExclusion = true;
+
+    const Poseidon::vk::DrawConstantsVK constants = Poseidon::vk::BuildDrawConstants(draw);
+
+    CHECK(constants.world._11 == 2.0f);
+    CHECK(constants.world._44 == 3.0f);
+    CHECK(constants.textureIds[0] == 100);
+    CHECK(constants.textureIds[1] == 101);
+    CHECK(constants.meshId == 42);
+    CHECK(constants.indexBegin == 5);
+    CHECK(constants.indexCount == 18);
+    CHECK(constants.pass == static_cast<std::uint32_t>(Poseidon::render::PassKind::WorldTransparent));
+    CHECK(constants.depth == static_cast<std::uint32_t>(Poseidon::render::DepthMode::ReadOnly));
+    CHECK(constants.blend == static_cast<std::uint32_t>(Poseidon::render::BlendMode::AlphaBlend));
+    CHECK(constants.fog == static_cast<std::uint32_t>(Poseidon::render::FogMode::AlphaFog));
+    CHECK(constants.cull == static_cast<std::uint32_t>(Poseidon::render::CullMode::None));
+    CHECK(constants.frontFace == static_cast<std::uint32_t>(Poseidon::render::FrontFaceMode::CCW));
+    CHECK(constants.alpha == static_cast<std::uint32_t>(Poseidon::render::AlphaMode::Blend));
+    CHECK(constants.lighting == static_cast<std::uint32_t>(Poseidon::render::LightingMode::Unlit));
+    CHECK(constants.texGen == static_cast<std::uint32_t>(Poseidon::render::TexGenMode::Detail));
+    CHECK(constants.surface == static_cast<std::uint32_t>(Poseidon::render::SurfaceMode::OnSurface));
+    CHECK(constants.samplerFilter == static_cast<std::uint32_t>(Poseidon::render::SamplerFilter::Point));
+    CHECK(constants.samplerClamp == 3);
+    CHECK(constants.shader == static_cast<std::uint32_t>(Poseidon::render::ShaderFamily::Detail));
+    CHECK(constants.alphaRef == 127);
+    CHECK(constants.stencilExclusion == 1);
+}
+
+TEST_CASE("Vulkan frame draw constants preserve pass order", "[vulkan][draw-constants]")
+{
+    frame::SceneInputs inputs;
+    inputs.flags.hudEnabled = false;
+
+    frame::SceneDraw world;
+    world.mesh.id = 10;
+    world.indexCount = 3;
+
+    frame::SceneDraw transparent;
+    transparent.descriptor.pass = Poseidon::render::PassKind::WorldTransparent;
+    transparent.mesh.id = 20;
+    transparent.indexCount = 6;
+
+    inputs.worldOpaqueDraws.push_back(world);
+    inputs.worldTransparentDraws.push_back(transparent);
+
+    const frame::Frame built = frame::BuildFrame(inputs);
+    const std::vector<Poseidon::vk::DrawConstantsVK> constants = Poseidon::vk::BuildDrawConstants(built);
+
+    REQUIRE(constants.size() == 2);
+    CHECK(constants[0].meshId == 10);
+    CHECK(constants[0].indexCount == 3);
+    CHECK(constants[1].meshId == 20);
+    CHECK(constants[1].indexCount == 6);
 }
