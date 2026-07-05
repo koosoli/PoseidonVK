@@ -1,74 +1,147 @@
 # Arma: Cold War Assault - Remastered - Community Edition (CWR-CE) - Modernization Fork
 
-_Modernization-focused fork of https://github.com/ofpisnotdead-com/CWR-CE_
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/koosoli)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/koosoli)
 
-This repository is `koosoli/CWR-CE`, a modernization-focused fork of the
-community CWR-CE codebase. The upstream community project and this fork have
-different goals. Upstream is focused on its own community-edition direction;
-this fork tries to stay compatible and easy to sync with upstream for as long as
-practical, while still allowing architectural divergence when modernization
-requires it.
+`koosoli/CWR-CE` is a modernization-focused fork of the community
+[`ofpisnotdead-com/CWR-CE`](https://github.com/ofpisnotdead-com/CWR-CE)
+codebase, which continues Bohemia Interactive's official source release for the
+classic Poseidon engine behind *Arma: Cold War Assault* / *Operation Flashpoint:
+Cold War Crisis*.
 
-## What This Fork Is Trying To Do
+This fork tries to stay compatible with upstream CWR-CE for as long as practical
+while deliberately diverging where modernization requires a different
+architecture. The goal is not to replace the upstream project. The goal is to
+explore a more explicit, backend-neutral, modern engine direction while keeping
+the original game and data formats alive.
 
-The long-term goal is to turn the Poseidon codebase into a more explicit,
-backend-neutral, modern rendering and asset platform while preserving as much
-legacy game compatibility as possible.
+This project is not an official Bohemia Interactive product.
+
+## Modernization Goals
+
+The long-term goal is to turn the classic Poseidon codebase into a clear,
+observable, backend-neutral rendering and asset platform that can support both
+legacy Cold War Assault content and modern asset workflows.
 
 Current priorities include:
 
-- Keeping GL33 working as the visual reference renderer.
-- Gradually removing backend-specific assumptions from shared engine code.
-- Preparing the engine for a future Vulkan backend.
-- Improving render-frame observability, validation, and diagnostics.
-- Building native support for modern asset workflows beside the legacy formats.
-- Staying compatible with upstream CWR-CE where it does not block those goals.
+- **GL33 reference renderer:** Keep the existing OpenGL 3.3 renderer working as
+  the visual baseline while other backends are developed.
+- **Backend-neutral core:** Remove OpenGL-specific assumptions from shared
+  engine code so future backends do not inherit GL-era coupling.
+- **Vulkan path:** Prepare for a first-class Vulkan backend with explicit
+  resource ownership, validation, frame synchronization, and modern GPU
+  features.
+- **Render observability:** Improve render-frame validation, logging,
+  diagnostics, and telemetry so renderer changes can be tested instead of
+  guessed.
+- **Modern asset pipeline:** Add native loader paths for modern formats beside
+  legacy formats, with backend-neutral descriptors that Vulkan can use fully and
+  GL33 can fall back from cleanly.
+- **Upstream compatibility where practical:** Keep syncing with upstream CWR-CE
+  possible when it does not block this fork's modernization goals.
 
-This is not an official Bohemia Interactive product, and it is not intended to
-replace the upstream project. It is a separate experimental modernization fork.
+## Roadmap
+
+This roadmap is intentionally staged. GL33 remains the reference renderer until
+new backends prove parity, and each phase should keep the game buildable and
+smoke-testable.
+
+### Phase 0 - Backend-Neutral Core And Observability
+
+- [x] Remove direct shared-engine dependency on GL33 texture types.
+- [x] Add backend-neutral texture validity checks.
+- [x] Move GL-only helper code under GL33 ownership.
+- [x] Add source-audit tests that keep shared `engine/Poseidon` code free of
+  GL33 implementation headers.
+- [x] Replace raw GL-shaped draw-record fields with backend-owned resource IDs.
+- [x] Add GL33-local mesh and texture resource resolution at emit time.
+- [x] Extend render-frame statistics for textures, vertex buffers, and index
+  buffers.
+- [x] Externalize the first GL33 shader sources and audit them with glslang.
+- [x] Fix GL33 texture replay/fallback handling found during demo smoke testing.
+- [ ] Keep running manual GL33 demo smoke tests as review feedback lands.
+
+### Phase 1 - Minimal Vulkan Backend
+
+- [ ] Add a `PoseidonVK` target.
+- [ ] Register a `vulkan` backend in the existing backend factory.
+- [ ] Make `--render vulkan` report availability and failure reasons clearly.
+- [ ] Create a Vulkan instance, device, surface, swapchain, and debug messenger.
+- [ ] Open a window, clear to a known color, present, resize, and shut down
+  cleanly under validation layers.
+
+### Phase 2 - Vulkan Raster Parity
+
+- [ ] Feed camera, projection, fog, lighting, and per-draw constants into Vulkan.
+- [ ] Upload static and dynamic mesh buffers through backend-owned resources.
+- [ ] Implement texture creation, sampler state, mip use, and fallback behavior.
+- [ ] Build pipeline state from the existing render-pass descriptors.
+- [ ] Render terrain, models, sky, water, cockpit, HUD, text, and shadow passes.
+- [ ] Add screenshot or frame-observation checks to compare Vulkan against GL33.
+
+### Phase 3 - Modern Assets And Streaming
+
+- [ ] Define backend-neutral texture, mesh, material, compression, and residency
+  descriptors.
+- [ ] Add native modern texture loader paths beside legacy PAA/PAC handling.
+- [ ] Align Vulkan uploads with block-compressed formats such as BC7 where
+  supported.
+- [ ] Add upload budgets, staging paths, residency telemetry, and diagnostics.
+- [ ] Keep GL33 insulated with fallback, transcode, emulation, or explicit
+  diagnostics when a modern asset feature cannot map directly.
+
+### Phase 4 - Asset Scale And Visual Modernization
+
+- [ ] Audit and extend 16-bit index assumptions for larger meshes.
+- [ ] Add 32-bit index metadata and backend draw support.
+- [ ] Document safe modern asset budgets and compatibility limits.
+- [ ] Improve lighting and shaders after Vulkan parity is stable.
+- [ ] Explore HDR, tone mapping, better shadows, normal mapping, and optional
+  advanced effects only after the baseline renderer is trustworthy.
 
 ## AI-Assisted Development And Funding
 
-A lot of this work is AI-assisted, exploratory, and test-driven. In practice
-that means it can consume a large number of API tokens while auditing legacy
-systems, generating tests, reviewing regressions, and iterating on renderer
-changes. That makes the project unusually expensive to work on.
+Much of this fork is developed with AI-assisted exploration, code auditing,
+test generation, and iterative refactoring. That is useful for a large legacy
+3D simulation codebase, but it also consumes a lot of API tokens. In practice,
+modernizing this engine this way is expensive.
 
-If you want to support this fork, contributions are very welcome:
+If you want to support this work:
 
 - GitHub Sponsors: <https://github.com/sponsors/koosoli>
 - Buy Me a Coffee: <https://buymeacoffee.com/koosoli>
 
 Any money received with a note that it is for this project will be used entirely
-to pay for API calls and development costs for this fork.
+to pay for API calls and direct development costs for this fork.
 
 ## Source, Brand, And Game Data
 
-This community repository continues the official engine and game source code (codename *Poseidon*) behind *Arma: Cold War Assault* — the game first released in 2001 as *Operation Flashpoint: Cold War Crisis*. That release launched Bohemia Interactive and began the technology lineage that later grew into Real Virtuality, Arma, and Enfusion. The code has been modernized to C++20, built with CMake and Clang, with cross-platform support for Windows x64 and Linux x64.
-Bohemia Interactive released it to the community that has kept this game alive for more than two decades — to study it, build on it, fix it, and create from it. Three things are worth keeping separate:
+Three things must stay separate:
 
-**Source code (this repository)**
+**Source code**
 
-The engine and game executables, licensed under GPL-3.0-or-later with additional terms under Section 7. You may use, study, modify, and redistribute it, provided it stays GPL and you follow those terms.
+The engine and game executable source in this repository is licensed under
+GPL-3.0-or-later with additional terms under Section 7. You may study, modify,
+and redistribute it under those terms.
 
-**The name and brand**
+**Name and branding**
 
-"ARMA", "Operation Flashpoint", and the logos are *not* granted. The trademarks stay with their owners ("ARMA" is Bohemia Interactive's). A fork must be renamed and must not present itself as "Arma" or as an official Bohemia Interactive product.
+`ARMA`, `Operation Flashpoint`, their logos, and related marks are not granted by
+this repository. Those trademarks remain with their respective owners. This fork
+must not present itself as an official Bohemia Interactive product.
 
-**Game data (separate)**
+**Game data**
 
-Models, textures, sounds, missions, and voices. These are not in this repository and are not GPL; they ship separately under the APL-SA license. A free Demo is available on Steam.
+Models, textures, sounds, missions, voices, and other game assets are not part of
+this repository and are not covered by the GPL. They ship separately under the
+Arma Public License Share Alike (APL-SA). A free demo is available on Steam for
+testing locally built binaries.
 
-In short: the code is free software, the name is not, and the game data comes separately. This license covers the source code only and grants no rights to the trademarks.
-
+In short: the code is free software, the names are not, and the game data comes
+separately.
 
 ## Quick Start
-
-### Development Builds
-
-The upstream project publishes CI builds at <https://ofpisnotdead-com.github.io/CWR-CE-builds/>.
-Those builds are useful for comparison, but they may not include changes from
-this fork. For this fork, building locally is the most reliable path.
 
 ### Build Requirements
 
@@ -77,36 +150,68 @@ this fork. For this fork, building locally is the most reliable path.
 - [Ninja](https://ninja-build.org/)
 - [vcpkg](https://vcpkg.io/)
 
-On Windows, run `winget install Kitware.CMake LLVM.LLVM Ninja-build.Ninja`
-and follow the instructions for [setting up
-vcpkg](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started?pivots=shell-powershell)
-to get the required software.
+On Windows, the core tools can be installed with:
+
+```powershell
+winget install Kitware.CMake LLVM.LLVM Ninja-build.Ninja
+```
+
+Then follow Microsoft's vcpkg setup guide:
+<https://learn.microsoft.com/en-us/vcpkg/get_started/get-started?pivots=shell-powershell>
 
 ### Compiling
+
+Windows x64:
 
 ```sh
 cmake --preset win-x64-clang-rwdi
 cmake --build build/win-x64-clang-rwdi
 ```
 
-On GNU/Linux, use the matching `linux-x64-clang-rwdi` preset.
+GNU/Linux x64:
 
-### Testing
+```sh
+cmake --preset linux-x64-clang-rwdi
+cmake --build build/linux-x64-clang-rwdi
+```
 
-Copy game binaries from `dist/` into [Steam Demo folder](https://store.steampowered.com/app/4819000/Arma_Cold_War_Assault_Remastered_Demo/) and start.
+For local smoke testing in this fork, the demo executable is usually the safest
+target:
+
+```sh
+cmake --build build/win-x64-clang-dbg --target PoseidonGameDemo --config Debug
+```
+
+### Smoke Testing
+
+Copy the locally built demo executable into the Steam demo installation folder
+and launch it there so it can find the separate game data.
+
+Steam demo page:
+<https://store.steampowered.com/app/4819000/Arma_Cold_War_Assault_Remastered_Demo/>
 
 > [!WARNING]
-> Compiled binaries are not drop-in compatible with original game folder. See https://github.com/ofpisnotdead-com/CWR-CE/issues/8#issuecomment-4772323490 and https://github.com/ofpisnotdead-com/CWR-CE/issues/29#issuecomment-4803747960 for more info.
+> Locally compiled binaries are not guaranteed to be drop-in compatible with
+> every original retail game folder. The Steam demo data is the preferred local
+> smoke-test target for this fork.
 
-## Layout
+### Upstream Builds
 
-- [Apps](apps/README.md) - executable targets
+The upstream project publishes CI builds at:
+<https://ofpisnotdead-com.github.io/CWR-CE-builds/>
+
+Those builds are useful for comparison, but they may not include changes from
+this fork.
+
+## Repository Layout
+
+- [Apps](apps/README.md) - executable targets and application entry points
 - [Engine](engine/README.md) - engine libraries and Rust Trident tooling
 - [Master server tools](mserver/README.md) - Rust service and CLI crates
-- [Tests](tests/README.md) - test source trees; CI currently compiles them only
+- [Tests](tests/README.md) - unit and regression test source trees
 - `cmake/` - presets, toolchains, vcpkg triplets, and overlay ports
-- `docker/` - container support for service and runtime environments
-- `packages/` - ignored local game data staging area
+- `docker/` - container support for services and runtime environments
+- `packages/` - ignored local game-data staging area
 - `resources/` - application icon resources
 - `thirdparty/` - vendored third-party headers and sources
 
@@ -120,45 +225,46 @@ Copy game binaries from `dist/` into [Steam Demo folder](https://store.steampowe
 ## License
 
 The source in this repository is licensed under the **GNU General Public License
-v3.0 *or later***, with additional terms under **Section 7** of the GPL. See [`LICENSE`](LICENSE) for the
-full text.
-This license does not grant you any right to use "ARMA" or any other Bohemia Interactive trademark.
+v3.0 or later**, with additional terms under **Section 7** of the GPL. See
+[`LICENSE`](LICENSE) for the full text.
 
-The [`thirdparty/`](thirdparty) directory is **excluded** from the project's GPL
-license: it contains vendored third-party code (glad, the RenderDoc API header)
-under their own respective licenses — see [`thirdparty/README.md`](thirdparty/README.md).
-Dependencies pulled in via vcpkg ([`vcpkg.json`](vcpkg.json)) likewise remain under
-their own licenses.
+This license does not grant any right to use `ARMA`, `Operation Flashpoint`, or
+any other Bohemia Interactive or Electronic Arts trademark.
 
-*"ARMA" is a registered trademark of BOHEMIA INTERACTIVE a.s. "OPERATION FLASHPOINT" is a registered trademark of Electronic Arts Inc.
-See [`LICENSE`](LICENSE) for information concerning trademarks. This credits file is
-informational and does not constitute any grant and/or waiver of rights.*
+The [`thirdparty/`](thirdparty) directory is excluded from this repository's GPL
+license. It contains vendored third-party code, such as glad and the RenderDoc
+API header, under their own respective licenses. See
+[`thirdparty/README.md`](thirdparty/README.md). Dependencies pulled in via
+[`vcpkg.json`](vcpkg.json) likewise remain under their own licenses.
 
-### Game data / assets — Arma Public License Share Alike (APL-SA)
+`ARMA` is a registered trademark of BOHEMIA INTERACTIVE a.s. `OPERATION
+FLASHPOINT` is a registered trademark of Electronic Arts Inc. Use of those names
+here is informational and does not constitute any grant, waiver, endorsement, or
+official affiliation.
 
-Game data and assets (models, textures, sounds, missions, etc.) are **not part of
-this repository** and are **not** covered by the GPL. They are released separately
-by Bohemia Interactive under the **Arma Public License Share Alike (APL-SA)**:
+### Game Data And Assets
 
-- APL-SA license text: <https://www.bohemia.net/community/licenses/arma-public-license-share-alike>
+Game data and assets are not part of this repository and are not covered by the
+GPL. They are released separately by Bohemia Interactive under the Arma Public
+License Share Alike (APL-SA):
 
-### Getting game data to run what you build
+- APL-SA license text:
+  <https://www.bohemia.net/community/licenses/arma-public-license-share-alike>
 
-The compiled binaries need game data to run. You can obtain the **free Demo game
-data** on Steam:
+The compiled binaries need game data to run. You can obtain free demo game data
+from Steam:
 
-- *Arma: Cold War Assault Remastered* Demo on Steam: <https://store.steampowered.com/app/4819000>
+- *Arma: Cold War Assault Remastered* Demo:
+  <https://store.steampowered.com/app/4819000>
 
-The full game data ships with the retail game. Whatever you do with assets is
-governed by the APL-SA linked above; whatever you do with this source is governed by
-the GPL with additional terms per Section 7 in [`LICENSE`](LICENSE).
-
+Whatever you do with assets is governed by the APL-SA linked above. Whatever you
+do with this source is governed by the GPL with additional terms per Section 7 in
+[`LICENSE`](LICENSE).
 
 ## Contributing
 
-This is the community continuation of the official source release. Pull requests,
-bug reports, ports, tooling improvements, documentation updates, and development
-ideas are welcome here.
+This fork welcomes bug reports, experiments, ports, tooling improvements,
+documentation updates, tests, and modernization work that fit the goals above.
 
 Please use issues for bugs and proposals, and open pull requests for source,
 build, test, or documentation changes. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
