@@ -148,9 +148,32 @@ smoke-testable.
 - [ ] Audit and extend 16-bit index assumptions for larger meshes.
 - [ ] Add 32-bit index metadata and backend draw support.
 - [ ] Document safe modern asset budgets and compatibility limits.
+- [ ] Extend Index Buffer Bit-Depth: Audit the `MeshRegistryVK` to dynamically handle both `VK_INDEX_TYPE_UINT16` and `VK_INDEX_TYPE_UINT32` to allow high-fidelity mod assets to bypass the legacy 64k vertex limit.
+- [ ] Vulkan Camera Matrix Floating-Point Precision: Refactor the camera projection uniform math to utilize large-world relative-coordinate anchoring to eliminate vertex jitter at extreme map distances (5000m+).
+- [ ] Graceful Asset Loader Fallbacks: Lock down `TextBankVK` format mappings to route all legacy unhandled color formats (like paletted P8 or uncompressed AI88) straight to `kFallbackResourceId = 1` cleanly without outputting console clutter.
 - [ ] Improve lighting and shaders after Vulkan parity is stable.
-- [ ] Explore HDR, tone mapping, better shadows, normal mapping, and optional
-  advanced effects only after the baseline renderer is trustworthy.
+- [ ] Explore HDR, tone mapping, better shadows, normal mapping, and optional advanced effects only after the baseline renderer is trustworthy.
+
+### Phase 4.5 - Sandbox Physics & Core Foundation (Box3D Integration)
+
+- [ ] Isolate Presentation Physics (Step 1): Introduce Box3D (C17) initially as an isolated Visual Presentation Subsystem (debris, particle collision, destructible walls), feeding transforms directly to dynamic Vulkan draw buffers.
+- [ ] Abstract Simulation Bindings (Step 2): Structure the Box3D integration layer using abstract state wrappers (`PhysicsWorldBridge`), isolating it from the legacy engine's internal movement tickers.
+- [ ] Multi-Threaded Broadphase Environment Mapping: Feed the Vulkan terrain heightfield matrix and static object convex hulls into the Box3D world, verifying deterministic island-solving across threads.
+- [ ] Future Parity Milestone: Document the performance profiling of Box3D’s character mover and joint constraints to prepare for a complete replacement of the legacy simulation/vehicle physics engine in a post-Vulkan roadmap branch.
+
+### Phase 5 - Modern Forward+ Shading Pipeline
+
+- [ ] Clustered Forward Push-Constant Infrastructure: Upgrade the scene pipeline layout to allocate grid-based light visibility tracking indices.
+- [ ] Dynamic Multi-Light Shaders (`scene.frag.glsl`): Uncap legacy light restrictions to loop through hundreds of localized, distance-attenuated point/spot lights simultaneously.
+- [ ] GPU Ocean Vertex Displacement: Replace the legacy flat-water grid plane with a real-time FFT ocean displacement shader inside the vertex pipeline.
+
+### Phase 6 - Compute Shader FX Scale
+
+- [ ] Compute Shader Weather Particles: Offload weather and rain simulation entirely to a GPU compute pipeline to track physical droplets interacting with wind and depth buffers.
+
+### Phase 9 - Async Audio Pipeline Modernization
+
+- [ ] Asynchronous Multi-Channel Audio Queue: Refactor the synchronous, blocking command radio line player to handle real-time sample streaming on a dedicated thread, eliminating frame-pacing drops.
 
 ## AI-Assisted Development And Funding
 
