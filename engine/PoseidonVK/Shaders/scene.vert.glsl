@@ -8,6 +8,7 @@ layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vWorldNormal;
 layout(location = 2) out vec2 vTexcoord;
 layout(location = 3) out float vFogFactor;
+layout(location = 4) flat out uint vDrawIndex;
 
 layout(set = 0, binding = 0, std140) uniform FrameConstants
 {
@@ -86,6 +87,7 @@ void main()
     vWorldPos = worldPos.xyz;
     vWorldNormal = worldNormal;
     vTexcoord = inTexcoord;
+    vDrawIndex = drawIndex;
 
     // Fog factor computed vertex-side from the uploaded frame constants, mirroring
     // the GL33 vsTransform convention: distance is camera-relative (view-space

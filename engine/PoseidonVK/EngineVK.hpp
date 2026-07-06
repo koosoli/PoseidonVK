@@ -4,6 +4,7 @@
 #include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/FrameConstantsVK.hpp>
 #include <PoseidonVK/MeshRegistryVK.hpp>
+#include <PoseidonVK/PipelineCacheVK.hpp>
 #include <PoseidonVK/SceneDrawCommandsVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
@@ -13,6 +14,9 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <unordered_map>
+
+namespace Poseidon { class TextBankVK; class TextureVK; }
 
 struct SDL_Window;
 
@@ -42,6 +46,7 @@ class EngineVK : public EngineDummy
     const std::vector<DrawItem>* GetRecordedDraws() const override { return &_drawItems; }
     void PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec& spec) override;
     void PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorld, const render::LegacySpec& spec) override;
+    AbstractTextBank* TextBank() override;
     bool IsOpen() const override { return _open; }
     void SetMouseGrab(bool grab) override;
     bool IsMouseGrabbed() const override { return _mouseGrab; }
@@ -87,6 +92,9 @@ class EngineVK : public EngineDummy
     void EndDebugLabel(VkCommandBuffer commandBuffer) const;
     void UploadFrameConstants();
     bool UploadDrawConstants();
+    // Returns the scene VkPipeline for the given render-pass descriptor, creating
+    // it on first use. The cache is keyed by (cull, frontFace, depth, blend).
+    VkPipeline GetOrCreateScenePipeline(const render::RenderPassDescriptor& desc);
     void DestroyFrameDescriptorResources();
     void DestroyFrameConstantsBuffer();
     void DestroyDrawConstantsBuffer();
@@ -101,6 +109,14 @@ class EngineVK : public EngineDummy
     void PresentBootstrapFrame();
     void Shutdown();
     void OnResized();
+
+    void RegisterTexture(TextureVK* tex);
+    void UnregisterTexture(TextureVK* tex);
+    TextureVK* ResolveTexture(std::uint32_t id) const;
+
+    bool CreateTextureDescriptorLayout();
+    bool CreateTextureDescriptorPool();
+    void DestroyTextureDescriptorResources();
 
     SDL_Window* _window = nullptr;
     VkInstance _instance = VK_NULL_HANDLE;
@@ -121,8 +137,14 @@ class EngineVK : public EngineDummy
     VkDescriptorSet _frameDescriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout _scenePipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _textureDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _textureDescriptorPool = VK_NULL_HANDLE;
     VkPipeline _bootstrapPipeline = VK_NULL_HANDLE;
     VkPipeline _scenePipeline = VK_NULL_HANDLE;
+    // Scene shader modules kept alive for pipeline cache variant creation.
+    VkShaderModule _sceneVertexModule = VK_NULL_HANDLE;
+    VkShaderModule _sceneFragmentModule = VK_NULL_HANDLE;
+    vk::PipelineCacheVK _scenePipelineCache;
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D _swapchainExtent{};
@@ -167,7 +189,13 @@ class EngineVK : public EngineDummy
     DrawItem _currentDrawItem;
     std::uint32_t _lastTexture1ResourceId = 1;
 
+    TextBankVK* _textBank = nullptr;
+    std::unordered_map<std::uint32_t, TextureVK*> _textureRegistry;
+    TextureVK* _fallbackWhiteTexture = nullptr;
+
     friend class VertexBufferVK;
+    friend class TextureVK;
+    friend class TextBankVK;
 };
 
 } // namespace Poseidon

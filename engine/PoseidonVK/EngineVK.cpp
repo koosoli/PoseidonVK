@@ -1,8 +1,11 @@
 #include <PoseidonVK/EngineVK.hpp>
 
+#include <PoseidonVK/TextBankVK.hpp>
+#include <PoseidonVK/TextureVK.hpp>
 #include <PoseidonVK/VertexBufferVK.hpp>
 #include <PoseidonVK/BootstrapPushConstantsVK.hpp>
 #include <Poseidon/Graphics/Core/MatrixConversion.hpp>
+#include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
 #include <unordered_map>
 #include <PoseidonVK/BufferVK.hpp>
@@ -423,7 +426,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     if (!CreateInstance() || !CreateDebugMessenger() || !CreateSurface() || !PickPhysicalDevice() || !CreateDevice() ||
         !CreateFrameConstantsBuffer() || !CreateBootstrapVertexBuffer() || !CreateBootstrapIndexBuffer() ||
         !CreateSceneVertexBuffer() || !CreateSceneIndexBuffer() ||
-        !EnsureDrawConstantsBufferCapacity(1) || !CreateFrameDescriptorLayout() || !CreatePipelineLayout() ||
+        !EnsureDrawConstantsBufferCapacity(1) || !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() ||
+        !CreatePipelineLayout() || !CreateTextureDescriptorPool() ||
         !CreateScenePipelineLayout() || !CreateFrameDescriptorSet() ||
         !CreateCommandPool() || !CreateSwapchain() || !CreateBootstrapPipeline() || !CreateScenePipeline() ||
         !CreateSyncObjects())
@@ -456,6 +460,18 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
              _height, static_cast<int>(_windowMode), _graphicsQueueFamily, _presentQueueFamily);
     LOG_WARN(Graphics, "Vulkan: scene rendering is not implemented yet; bootstrap currently presents a validation "
                        "triangle only");
+
+    _textBank = new TextBankVK(*this);
+
+    // Create and register fallback white texture
+    uint32_t whitePixel = 0xFFFFFFFF;
+    _fallbackWhiteTexture = static_cast<TextureVK*>(_textBank->CreateDynamic(1, 1, &whitePixel, 4, false));
+    if (_fallbackWhiteTexture)
+    {
+        UnregisterTexture(_fallbackWhiteTexture);
+        _fallbackWhiteTexture->_resourceId = TextureVK::kFallbackResourceId;
+        RegisterTexture(_fallbackWhiteTexture);
+    }
     return true;
 }
 
@@ -707,7 +723,7 @@ bool EngineVK::CreatePipelineLayout()
 
 bool EngineVK::CreateScenePipelineLayout()
 {
-    VkDescriptorSetLayout setLayouts[] = {_frameDescriptorSetLayout};
+    VkDescriptorSetLayout setLayouts[] = {_frameDescriptorSetLayout, _textureDescriptorSetLayout};
 
     VkPushConstantRange pushConstants{};
     pushConstants.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -716,8 +732,8 @@ bool EngineVK::CreateScenePipelineLayout()
 
     VkPipelineLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    createInfo.setLayoutCount = _frameDescriptorSetLayout ? 1u : 0u;
-    createInfo.pSetLayouts = _frameDescriptorSetLayout ? setLayouts : nullptr;
+    createInfo.setLayoutCount = 2;
+    createInfo.pSetLayouts = setLayouts;
     createInfo.pushConstantRangeCount = 1;
     createInfo.pPushConstantRanges = &pushConstants;
 
@@ -882,6 +898,72 @@ bool EngineVK::CreateFrameDescriptorLayout()
                   "PoseidonVK Frame Descriptor Set Layout");
     return true;
 }
+
+bool EngineVK::CreateTextureDescriptorLayout()
+{
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &binding;
+
+    const VkResult result = vkCreateDescriptorSetLayout(_device, &createInfo, nullptr, &_textureDescriptorSetLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: vkCreateDescriptorSetLayout(textures) failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_textureDescriptorSetLayout),
+                  "PoseidonVK Texture Descriptor Set Layout");
+    return true;
+}
+
+bool EngineVK::CreateTextureDescriptorPool()
+{
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 2048; // max textures
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.maxSets = 2048;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+
+    const VkResult result = vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_textureDescriptorPool);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: vkCreateDescriptorPool(textures) failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_POOL, VulkanObjectHandle(_textureDescriptorPool),
+                  "PoseidonVK Texture Descriptor Pool");
+    return true;
+}
+
+void EngineVK::DestroyTextureDescriptorResources()
+{
+    if (_device)
+    {
+        if (_textureDescriptorPool)
+        {
+            vkDestroyDescriptorPool(_device, _textureDescriptorPool, nullptr);
+            _textureDescriptorPool = VK_NULL_HANDLE;
+        }
+        if (_textureDescriptorSetLayout)
+        {
+            vkDestroyDescriptorSetLayout(_device, _textureDescriptorSetLayout, nullptr);
+            _textureDescriptorSetLayout = VK_NULL_HANDLE;
+        }
+    }
+}
+
 
 bool EngineVK::CreateFrameDescriptorSet()
 {
@@ -1600,8 +1682,12 @@ bool EngineVK::CreateScenePipeline()
 
     const VkResult result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
                                                       &_scenePipeline);
-    vkDestroyShaderModule(_device, fragmentModule, nullptr);
-    vkDestroyShaderModule(_device, vertexModule, nullptr);
+
+    // Keep the shader modules alive so the pipeline cache can create variants.
+    // They will be destroyed in DestroyScenePipelineLayout.
+    _sceneVertexModule   = vertexModule;
+    _sceneFragmentModule = fragmentModule;
+
     if (result != VK_SUCCESS)
     {
         LOG_ERROR(Graphics, "Vulkan: scene pipeline creation failed: {}", VkResultName(result));
@@ -1609,6 +1695,12 @@ bool EngineVK::CreateScenePipeline()
     }
 
     SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_scenePipeline), "PoseidonVK Scene Quad Pipeline");
+
+    // Initialise the pipeline cache with the fixed state shared across all variants.
+    _scenePipelineCache.Init(_device, _renderPass, _scenePipelineLayout,
+                             _sceneVertexModule, _sceneFragmentModule,
+                             vertexInput, inputAssembly, viewportState, multisampling);
+
     LOG_INFO(Graphics, "Vulkan: scene pipeline created");
     return true;
 }
@@ -1812,9 +1904,7 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
     }
     if (_scenePipeline)
     {
-        // Bind the scene pipeline and frame descriptor set once; per-command
-        // state (vertex/index buffers + push constants) is bound inside the
-        // loop after resolving each draw's mesh through the registry.
+        VkPipeline lastBoundPipeline = _scenePipeline;
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipeline);
         if (_frameDescriptorSet)
         {
@@ -1824,8 +1914,48 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
 
         if (!_lastSceneDrawCommands.empty())
         {
+            VkDescriptorSet lastBoundTexDescriptorSet = VK_NULL_HANDLE;
             for (const vk::SceneDrawCommandVK& command : _lastSceneDrawCommands)
             {
+                vk::PipelineKeyVK key;
+                const vk::DrawConstantsVK& draw = _lastDrawConstants[command.drawIndex];
+                key.cull = static_cast<render::CullMode>(draw.cull);
+                key.frontFace = static_cast<render::FrontFaceMode>(draw.frontFace);
+                key.depth = static_cast<render::DepthMode>(draw.depth);
+                key.blend = static_cast<render::BlendMode>(draw.blend);
+
+                VkPipeline pipeline = _scenePipelineCache.Get(key);
+                if (!pipeline)
+                    pipeline = _scenePipeline;
+
+                if (pipeline != lastBoundPipeline)
+                {
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                    lastBoundPipeline = pipeline;
+                }
+
+                // Bind texture descriptor set (Set 1)
+                VkDescriptorSet texDescriptorSet = VK_NULL_HANDLE;
+                std::uint32_t texId = draw.textureIds[0];
+                if (texId != 0)
+                {
+                    TextureVK* tex = ResolveTexture(texId);
+                    if (tex)
+                        texDescriptorSet = tex->GetDescriptorSet();
+                }
+
+                if (texDescriptorSet == VK_NULL_HANDLE && _fallbackWhiteTexture)
+                {
+                    texDescriptorSet = _fallbackWhiteTexture->GetDescriptorSet();
+                }
+
+                if (texDescriptorSet != VK_NULL_HANDLE && texDescriptorSet != lastBoundTexDescriptorSet)
+                {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 1, 1,
+                                            &texDescriptorSet, 0, nullptr);
+                    lastBoundTexDescriptorSet = texDescriptorSet;
+                }
+
                 // Resolve the draw's mesh via the registry. Until real per-object
                 // uploads land, most commands resolve to the bring-up quad; the
                 // resolve-and-bind path itself is exercised live against real ids.
@@ -1866,6 +1996,16 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         {
             // No frame plan yet: draw the bring-up quad with identity world so the
             // scene pipeline produces visible output before SubmitFramePlan arrives.
+            if (_fallbackWhiteTexture)
+            {
+                VkDescriptorSet fallbackSet = _fallbackWhiteTexture->GetDescriptorSet();
+                if (fallbackSet != VK_NULL_HANDLE)
+                {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 1, 1,
+                                            &fallbackSet, 0, nullptr);
+                }
+            }
+
             const vk::MeshResourcesVK* mesh = _meshRegistry.Resolve(_bootstrapMeshId);
             if (mesh && mesh->vertexBuffer)
             {
@@ -1985,6 +2125,18 @@ void EngineVK::DestroySceneIndexBuffer()
 
 void EngineVK::DestroyScenePipelineLayout()
 {
+    _scenePipelineCache.Destroy(_device);
+
+    if (_sceneFragmentModule)
+    {
+        vkDestroyShaderModule(_device, _sceneFragmentModule, nullptr);
+        _sceneFragmentModule = VK_NULL_HANDLE;
+    }
+    if (_sceneVertexModule)
+    {
+        vkDestroyShaderModule(_device, _sceneVertexModule, nullptr);
+        _sceneVertexModule = VK_NULL_HANDLE;
+    }
     if (_scenePipelineLayout)
     {
         vkDestroyPipelineLayout(_device, _scenePipelineLayout, nullptr);
@@ -2081,6 +2233,11 @@ void EngineVK::PresentBootstrapFrame()
 
 void EngineVK::Shutdown()
 {
+    // Destroy the texture bank before the device so GPU images are freed first.
+    delete _textBank;
+    _textBank = nullptr;
+    _fallbackWhiteTexture = nullptr;
+
     if (_device)
     {
         vkDeviceWaitIdle(_device);
@@ -2107,6 +2264,7 @@ void EngineVK::Shutdown()
         }
         DestroyScenePipelineLayout();
         DestroyFrameDescriptorResources();
+        DestroyTextureDescriptorResources();
         DestroyFrameConstantsBuffer();
         DestroyDrawConstantsBuffer();
         DestroyBootstrapVertexBuffer();
@@ -2235,20 +2393,53 @@ namespace
 std::uint32_t GetOrCreateTextureResourceId(Texture* tex)
 {
     if (!tex)
-        return 0;
-
+        return TextureVK::kFallbackResourceId;
+    // If this is a real TextureVK, return its registered resource ID.
+    if (auto* tvk = dynamic_cast<TextureVK*>(tex))
+        return tvk->GetResourceId();
+    // Fallback for dummy/unknown textures — assign a stable ID per pointer.
     static std::unordered_map<Texture*, std::uint32_t> s_texToId;
-    static std::uint32_t s_nextId = 2; // 1 is fallback
-
+    static std::uint32_t s_nextId = TextureVK::kFallbackResourceId + 1;
     auto it = s_texToId.find(tex);
     if (it != s_texToId.end())
         return it->second;
-
     std::uint32_t id = s_nextId++;
     s_texToId[tex] = id;
     return id;
 }
 } // namespace
+
+AbstractTextBank* EngineVK::TextBank()
+{
+    return _textBank;
+}
+
+VkPipeline EngineVK::GetOrCreateScenePipeline(const render::RenderPassDescriptor& desc)
+{
+    return _scenePipelineCache.Get(desc);
+}
+
+void EngineVK::RegisterTexture(TextureVK* tex)
+{
+    if (tex)
+        _textureRegistry[tex->GetResourceId()] = tex;
+}
+
+void EngineVK::UnregisterTexture(TextureVK* tex)
+{
+    if (tex)
+        _textureRegistry.erase(tex->GetResourceId());
+}
+
+TextureVK* EngineVK::ResolveTexture(std::uint32_t id) const
+{
+    auto it = _textureRegistry.find(id);
+    if (it != _textureRegistry.end())
+        return it->second;
+    return nullptr;
+}
+
+
 
 void EngineVK::InitDraw(bool clear, PackedColor color)
 {

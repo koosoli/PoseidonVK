@@ -4,6 +4,7 @@ layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vWorldNormal;
 layout(location = 2) in vec2 vTexcoord;
 layout(location = 3) in float vFogFactor;
+layout(location = 4) flat in uint vDrawIndex;
 
 layout(location = 0) out vec4 outColor;
 
@@ -24,6 +25,39 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 localLightAmbient[8];
     vec4 localLightDirection[8];
 } frame;
+
+struct DrawConstants
+{
+    mat4 world;
+    uint textureIds[4];
+    uint meshId;
+    uint indexBegin;
+    uint indexCount;
+    uint pass;
+    uint depth;
+    uint blend;
+    uint fog;
+    uint cull;
+    uint frontFace;
+    uint alpha;
+    uint lighting;
+    uint texGen;
+    uint surface;
+    uint samplerFilter;
+    uint samplerClamp;
+    uint shader;
+    uint alphaRef;
+    uint stencilExclusion;
+    uint reserved[2];
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer
+{
+    DrawConstants draws[];
+} drawConstants;
+
+layout(set = 1, binding = 0) uniform sampler2D tex0;
+
 
 void main()
 {
@@ -82,14 +116,31 @@ void main()
     }
     light = clamp(light, 0.0f, 1.0f);
 
-    // UV-driven two-tone color so the smoke test can tell the scene draw apart
-    // from the bootstrap triangle and confirm UVs travel through correctly.
-    vec3 baseColor = mix(vec3(0.10f, 0.55f, 0.85f), vec3(0.85f, 0.40f, 0.10f), vTexcoord.x);
+    vec4 texColor = texture(tex0, vTexcoord);
+
+    bool hasDraw = drawConstants.draws.length() > 0u;
+    uint drawIdx = hasDraw ? min(vDrawIndex, drawConstants.draws.length() - 1u) : 0u;
+    uint alphaMode = hasDraw ? drawConstants.draws[drawIdx].alpha : 0u;
+    uint alphaRefRaw = hasDraw ? drawConstants.draws[drawIdx].alphaRef : 0u;
+
+    float refValue = float(alphaRefRaw) / 255.0;
+    if (alphaMode == 3u) // TestAndBlend
+    {
+        float cov = clamp((texColor.a - refValue) / max(fwidth(texColor.a), 1e-4) + 0.5, 0.0, 1.0);
+        if (cov <= 0.0) discard;
+        texColor.a = cov;
+    }
+    else if (alphaMode == 1u) // Test
+    {
+        if (texColor.a < refValue) discard;
+    }
+
+    vec3 baseColor = texColor.rgb;
     vec3 litColor = baseColor * light;
 
     // Fog driven from the uploaded frame constants: mix toward frame.fogColor
     // as distance grows. vFogFactor=1 near (no fog), 0 far (full fog), matching
     // the GL33 vsTransform/vsFog convention.
     vec3 fogged = mix(frame.fogColor.rgb, litColor, vFogFactor);
-    outColor = vec4(fogged, 1.0f);
+    outColor = vec4(fogged, texColor.a);
 }

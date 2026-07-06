@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <PoseidonVK/RenderStateVK.hpp>
+#include <PoseidonVK/PipelineCacheVK.hpp>
 
 TEST_CASE("Vulkan render state maps cull and winding descriptors", "[vulkan][render-state]")
 {
@@ -145,3 +146,32 @@ TEST_CASE("Vulkan sampler create info matches the sampler descriptor", "[vulkan]
         CHECK(info.addressModeW == VK_SAMPLER_ADDRESS_MODE_REPEAT);
     }
 }
+
+TEST_CASE("Vulkan pipeline key hashing", "[vulkan][render-state]")
+{
+    using namespace Poseidon::vk;
+    PipelineKeyVK k1;
+    k1.cull = Poseidon::render::CullMode::Back;
+    k1.frontFace = Poseidon::render::FrontFaceMode::CW;
+    k1.depth = Poseidon::render::DepthMode::Normal;
+    k1.blend = Poseidon::render::BlendMode::Opaque;
+
+    PipelineKeyVK k2;
+    k2.cull = Poseidon::render::CullMode::Back;
+    k2.frontFace = Poseidon::render::FrontFaceMode::CW;
+    k2.depth = Poseidon::render::DepthMode::Normal;
+    k2.blend = Poseidon::render::BlendMode::Opaque;
+
+    PipelineKeyVK k3;
+    k3.cull = Poseidon::render::CullMode::None;
+    k3.frontFace = Poseidon::render::FrontFaceMode::CCW;
+    k3.depth = Poseidon::render::DepthMode::ReadOnly;
+    k3.blend = Poseidon::render::BlendMode::AlphaBlend;
+
+    PipelineKeyHash hash;
+    CHECK(hash(k1) == hash(k2));
+    CHECK(hash(k1) != hash(k3));
+    CHECK(k1 == k2);
+    CHECK(k1 != k3);
+}
+

@@ -125,9 +125,9 @@ smoke-testable.
 - [x] Drive the Vulkan scene draw loop from the backend-neutral frame plan,
   issuing one indexed draw per recorded command with per-draw SSBO world
   matrices (bring-up buffers shared until real mesh upload lands).
-- [ ] Upload static and dynamic mesh buffers through backend-owned resources.
-- [ ] Implement texture creation, sampler state, mip use, and fallback behavior.
-- [ ] Build complete Vulkan scene pipeline state from the existing render-pass
+- [x] Upload static and dynamic mesh buffers through backend-owned resources.
+- [x] Implement texture creation, sampler state, mip use, and fallback behavior.
+- [x] Build complete Vulkan scene pipeline state from the existing render-pass
   descriptors.
 - [ ] Render terrain, models, sky, water, cockpit, HUD, text, and shadow passes.
 - [ ] Add screenshot or frame-observation checks to compare Vulkan against GL33.

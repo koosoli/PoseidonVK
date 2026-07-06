@@ -18,6 +18,17 @@ struct BufferVK
     VkDeviceSize size = 0;
 };
 
+struct ImageVK
+{
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t mipLevels = 1;
+};
+
 uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
 VkResult CreateHostVisibleBuffer(VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceSize size,
@@ -26,5 +37,22 @@ VkResult CreateHostVisibleBuffer(VkPhysicalDevice physicalDevice, VkDevice devic
 void UploadMappedBuffer(const BufferVK& buffer, const void* data, std::size_t size);
 
 void DestroyBuffer(VkDevice device, BufferVK& buffer);
+
+// --- Image helpers ---
+
+VkResult CreateImage2D(VkPhysicalDevice physicalDevice, VkDevice device,
+                       uint32_t width, uint32_t height, uint32_t mipLevels,
+                       VkFormat format, VkImageUsageFlags usage,
+                       VkMemoryPropertyFlags memProps, ImageVK& out);
+
+void TransitionImageLayout(VkDevice device, VkCommandPool commandPool, VkQueue queue,
+                           VkImage image, uint32_t mipLevels,
+                           VkImageLayout oldLayout, VkImageLayout newLayout);
+
+void CopyBufferToImage(VkDevice device, VkCommandPool commandPool, VkQueue queue,
+                       VkBuffer src, VkImage dst,
+                       uint32_t width, uint32_t height, uint32_t mipLevel = 0);
+
+void DestroyImage(VkDevice device, ImageVK& image);
 
 } // namespace Poseidon::vk

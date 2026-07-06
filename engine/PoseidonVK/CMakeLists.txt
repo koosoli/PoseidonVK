@@ -15,6 +15,8 @@ set(POSEIDON_VK_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/RenderStateVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SceneDrawCommandsVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ScenePushConstantsVK.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TextBankVK.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TextureVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VertexBufferVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VertexLayoutVK.hpp
 )
