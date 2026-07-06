@@ -136,7 +136,9 @@ TEST_CASE("Vulkan scene vertex shader reads per-draw constants from the SSBO", "
     CHECK(vertexSource.find("layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer") !=
           std::string::npos);
     CHECK(vertexSource.find("mat4 world;") != std::string::npos);
-    CHECK(vertexSource.find("drawConstants.draws[0].world") != std::string::npos);
+    CHECK(vertexSource.find("uint drawIndex;") != std::string::npos);
+    CHECK(vertexSource.find("min(draw.drawIndex, drawConstants.draws.length() - 1u)") != std::string::npos);
+    CHECK(vertexSource.find("drawConstants.draws[drawIndex].world") != std::string::npos);
 }
 
 TEST_CASE("Vulkan DrawConstants SSBO element stride matches the shader struct", "[vulkan][scene-shaders]")
@@ -207,6 +209,7 @@ TEST_CASE("Vulkan scene push constants match the shader contract", "[vulkan][sce
 
     STATIC_REQUIRE(offsetof(ScenePushConstantsVK, world) == 0);
     STATIC_REQUIRE(offsetof(ScenePushConstantsVK, useDrawConstants) == 64);
+    STATIC_REQUIRE(offsetof(ScenePushConstantsVK, drawIndex) == 68);
     STATIC_REQUIRE(sizeof(ScenePushConstantsVK) == 80);
     STATIC_REQUIRE(Poseidon::vk::kScenePushConstantsSize == sizeof(ScenePushConstantsVK));
 }
@@ -222,6 +225,7 @@ TEST_CASE("Vulkan scene push constants build identity and world matrices", "[vul
         CHECK(constants.world._12 == 0.0f);
         CHECK(constants.world._21 == 0.0f);
         CHECK(constants.useDrawConstants == 0u);
+        CHECK(constants.drawIndex == 0u);
     }
     {
         Poseidon::GfxMatrix world;
@@ -230,11 +234,12 @@ TEST_CASE("Vulkan scene push constants build identity and world matrices", "[vul
         world._33 = 4.0f;
         world._44 = 5.0f;
         const Poseidon::vk::ScenePushConstantsVK constants =
-            Poseidon::vk::BuildScenePushConstants(world, true);
+            Poseidon::vk::BuildScenePushConstants(world, true, 3u);
         CHECK(constants.world._11 == 2.0f);
         CHECK(constants.world._22 == 3.0f);
         CHECK(constants.world._33 == 4.0f);
         CHECK(constants.world._44 == 5.0f);
         CHECK(constants.useDrawConstants == 1u);
+        CHECK(constants.drawIndex == 3u);
     }
 }

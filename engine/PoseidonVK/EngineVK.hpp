@@ -3,6 +3,7 @@
 #include <PoseidonVK/BufferVK.hpp>
 #include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/FrameConstantsVK.hpp>
+#include <PoseidonVK/SceneDrawCommandsVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
 #include <Poseidon/Graphics/Shared/WindowMode.hpp>
@@ -143,6 +144,7 @@ class EngineVK : public EngineDummy
     bool _debugUtilsEnabled = false;
     vk::FrameConstantsVK _lastFrameConstants = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
+    std::vector<vk::SceneDrawCommandVK> _lastSceneDrawCommands;
     std::size_t _drawConstantsCapacity = 0;
     VkClearColorValue _clearColor{{0.04f, 0.09f, 0.16f, 1.0f}};
     int _width = 1;

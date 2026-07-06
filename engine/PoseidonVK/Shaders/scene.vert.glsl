@@ -63,15 +63,16 @@ layout(push_constant) uniform SceneDraw
 {
     mat4 world;
     // Non-zero when the host uploaded at least one DrawConstants entry to the
-    // SSBO; the shader then prefers the per-draw world over the fallback.
+    // SSBO; the shader then prefers the selected per-draw world over the fallback.
     uint useDrawConstants;
+    uint drawIndex;
 } draw;
 
 void main()
 {
-    mat4 world = (draw.useDrawConstants != 0u && drawConstants.draws.length() > 0u)
-                     ? drawConstants.draws[0].world
-                     : draw.world;
+    bool hasDrawConstants = draw.useDrawConstants != 0u && drawConstants.draws.length() > 0u;
+    uint drawIndex = hasDrawConstants ? min(draw.drawIndex, drawConstants.draws.length() - 1u) : 0u;
+    mat4 world = hasDrawConstants ? drawConstants.draws[drawIndex].world : draw.world;
     vec4 worldPos = world * vec4(inPosition, 1.0);
     vec3 worldNormal = normalize(mat3(world) * inNormal);
 

@@ -22,16 +22,19 @@ struct alignas(16) ScenePushConstantsVK
 {
     GfxMatrix world = {};
     std::uint32_t useDrawConstants = 0;
+    std::uint32_t drawIndex = 0;
 };
 
 inline constexpr std::uint32_t kScenePushConstantsSize =
     static_cast<std::uint32_t>(sizeof(ScenePushConstantsVK));
 
-inline ScenePushConstantsVK BuildScenePushConstants(const GfxMatrix& world, bool useDrawConstants) noexcept
+inline ScenePushConstantsVK BuildScenePushConstants(const GfxMatrix& world, bool useDrawConstants,
+                                                   std::uint32_t drawIndex = 0) noexcept
 {
     ScenePushConstantsVK constants;
     constants.world = world;
     constants.useDrawConstants = useDrawConstants ? 1u : 0u;
+    constants.drawIndex = drawIndex;
     return constants;
 }
 
@@ -47,6 +50,7 @@ inline ScenePushConstantsVK BuildIdentityScenePushConstants() noexcept
 
 static_assert(offsetof(ScenePushConstantsVK, world) == 0);
 static_assert(offsetof(ScenePushConstantsVK, useDrawConstants) == 64);
+static_assert(offsetof(ScenePushConstantsVK, drawIndex) == 68);
 static_assert(sizeof(ScenePushConstantsVK) == 80);
 static_assert(kScenePushConstantsSize == 80);
 static_assert(sizeof(ScenePushConstantsVK) <= 128, "Scene push constants must stay under the 128 B minimum");
