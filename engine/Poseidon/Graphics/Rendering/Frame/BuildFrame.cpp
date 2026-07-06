@@ -53,6 +53,9 @@ Frame BuildFrame(const SceneInputs& s)
     f.camera = s.camera;
     f.sunMatrix = s.sunMatrix;
     f.sunEnabled = s.sunEnabled;
+    f.sunDirection[0] = s.sunDirection[0];
+    f.sunDirection[1] = s.sunDirection[1];
+    f.sunDirection[2] = s.sunDirection[2];
     f.fogStart = s.fogStart;
     f.fogEnd = s.fogEnd;
     f.fogColorRGBA = s.fogColorRGBA;

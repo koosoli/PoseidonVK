@@ -115,7 +115,9 @@ TEST_CASE("Vulkan scene shaders share the frame descriptor contract", "[vulkan][
     CHECK(vertexSource.find("mat4 view;") != std::string::npos);
     CHECK(vertexSource.find("mat4 projection;") != std::string::npos);
     CHECK(vertexSource.find("mat4 sunMatrix;") != std::string::npos);
+    CHECK(vertexSource.find("vec4 sunDirection;") != std::string::npos);
     CHECK(fragmentSource.find("layout(set = 0, binding = 0, std140) uniform FrameConstants") != std::string::npos);
+    CHECK(fragmentSource.find("vec4 sunDirection;") != std::string::npos);
 }
 
 TEST_CASE("Vulkan scene vertex shader reads per-draw constants from the SSBO", "[vulkan][scene-shaders]")
@@ -154,6 +156,17 @@ TEST_CASE("Vulkan scene shaders drive fog from the uploaded frame constants", "[
     CHECK(fragmentSource.find("layout(location = 3) in float vFogFactor;") != std::string::npos);
     CHECK(fragmentSource.find("frame.fogColor.rgb") != std::string::npos);
     CHECK(fragmentSource.find("mix(frame.fogColor.rgb, litColor, vFogFactor)") != std::string::npos);
+}
+
+TEST_CASE("Vulkan scene fragment shader drives sun lighting from frame constants", "[vulkan][scene-shaders]")
+{
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const std::string fragmentSource = ReadTextFile(shaderDir / "scene.frag.glsl");
+
+    CHECK(fragmentSource.find("frame.sunDirection.xyz") != std::string::npos);
+    CHECK(fragmentSource.find("frame.lightingParams.x") != std::string::npos);
+    CHECK(fragmentSource.find("-sunDir") != std::string::npos);
+    CHECK(fragmentSource.find("* sunOn") != std::string::npos);
 }
 
 TEST_CASE("Vulkan scene shaders declare the world push constant", "[vulkan][scene-shaders]")

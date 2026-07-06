@@ -184,6 +184,9 @@ struct Frame
     float fogEnd = 1000.0f;
     std::uint32_t fogColorRGBA = 0; // packed RGBA; type-decoupled from engine PackedColor
     bool sunEnabled = true;
+    // World-space direction the sun light travels (normalized). Matches
+    // SceneInputs; backends negate it to obtain the vector toward the light.
+    float sunDirection[3] = {0.0f, -1.0f, 0.0f};
 
     // Per-frame GL error delta carried from SceneInputs.  Non-zero =
     // a new HIGH-severity GL error fired this frame.

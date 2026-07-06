@@ -157,16 +157,21 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
     // fogColorRGBA stays 0; backend-internal colour conversion happens
     // at draw time.
 
-    // Sun — extract the enabled flag.  The frame layer stores an
-    // identity sun matrix; the live engine's main-light direction is
-    // consumed during draw, not at extract time.
+    // Sun — extract the enabled flag and world-space travel direction.
+    // The frame layer stores an identity sun matrix; the live engine's
+    // main-light direction is now carried through the frame plan so Vulkan
+    // (and other backends) can light scene geometry without re-querying the
+    // scene graph at draw time.
     if (const LightSun* sun = scene.MainLight())
     {
         // sunEnabled mirrors the engine's "sun light is on" flag —
         // we don't have a direct getter, so use the conservative
         // assumption: sun is enabled if a MainLight exists.
         s.sunEnabled = true;
-        (void)sun; // direction folded into per-draw constants by Execute
+        const Vector3 dir = sun->Direction();
+        s.sunDirection[0] = dir.X();
+        s.sunDirection[1] = dir.Y();
+        s.sunDirection[2] = dir.Z();
     }
     else
     {

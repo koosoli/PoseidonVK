@@ -19,6 +19,7 @@ struct FrameConstantsVK
     float fogParams[4] = {};  // start, end, inverse range, enabled
     float fogColor[4] = {};   // rgba, normalized
     float lightingParams[4] = {}; // sun enabled, reserved
+    float sunDirection[4] = {};  // xyz world-space travel direction (normalized), w unused
 };
 
 static_assert(sizeof(GfxMatrix) == 64);
@@ -31,7 +32,8 @@ static_assert(offsetof(FrameConstantsVK, worldRect) == 224);
 static_assert(offsetof(FrameConstantsVK, fogParams) == 240);
 static_assert(offsetof(FrameConstantsVK, fogColor) == 256);
 static_assert(offsetof(FrameConstantsVK, lightingParams) == 272);
-static_assert(sizeof(FrameConstantsVK) == 288);
+static_assert(offsetof(FrameConstantsVK, sunDirection) == 288);
+static_assert(sizeof(FrameConstantsVK) == 304);
 
 inline float ChannelToFloat(std::uint32_t value) noexcept
 {
@@ -72,6 +74,10 @@ inline FrameConstantsVK BuildFrameConstants(const render::frame::Frame& frame) n
     constants.fogColor[2] = ChannelToFloat(rgba >> 8);
     constants.fogColor[3] = ChannelToFloat(rgba);
     constants.lightingParams[0] = frame.sunEnabled ? 1.0f : 0.0f;
+    constants.sunDirection[0] = frame.sunDirection[0];
+    constants.sunDirection[1] = frame.sunDirection[1];
+    constants.sunDirection[2] = frame.sunDirection[2];
+    constants.sunDirection[3] = 0.0f;
     return constants;
 }
 

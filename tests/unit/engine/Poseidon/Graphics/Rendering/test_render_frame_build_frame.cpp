@@ -119,6 +119,21 @@ TEST_CASE("Frame/BuildFrame: camera viewport and matrices pass through unchanged
 
 // Single-pass scenes — minimum non-trivial frames
 
+TEST_CASE("Frame/BuildFrame: sun direction passes through unchanged", "[render-frame][build-frame]")
+{
+    auto s = makeMinimal();
+    s.sunEnabled = true;
+    s.sunDirection[0] = 0.25f;
+    s.sunDirection[1] = -0.75f;
+    s.sunDirection[2] = 0.5f;
+
+    const auto f = Poseidon::render::frame::BuildFrame(s);
+    REQUIRE(f.sunEnabled);
+    REQUIRE(f.sunDirection[0] == 0.25f);
+    REQUIRE(f.sunDirection[1] == -0.75f);
+    REQUIRE(f.sunDirection[2] == 0.5f);
+}
+
 TEST_CASE("Frame/BuildFrame: one WorldOpaque draw -> single WorldOpaque pass with clear", "[render-frame][build-frame]")
 {
     auto s = makeMinimal();

@@ -18,15 +18,20 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 fogParams;
     vec4 fogColor;
     vec4 lightingParams;
+    vec4 sunDirection;
 } frame;
 
 void main()
 {
-    // Fixed directional light tilted from upper-left so the lit face shows a
-    // clear gradient across the triangle. Normalized against the world normal
-    // to produce a diffuse term without any texture or material binding yet.
-    vec3 lightDir = normalize(vec3(-0.45f, -0.7f, -0.55f));
-    float diffuse = max(dot(normalize(vWorldNormal), -lightDir), 0.0f);
+    // Directional light driven from the uploaded frame constants. sunDirection
+    // is the world-space direction the light travels, so the vector toward the
+    // light is -sunDirection (matching the GL33 vsTransform dot(N, -sunDir)).
+    // lightingParams.x carries the sun-enabled flag; when off we fall back to
+    // ambient-only so geometry stays visible but unlit.
+    vec3 rawSunDir = frame.sunDirection.xyz;
+    vec3 sunDir = length(rawSunDir) > 0.0001f ? normalize(rawSunDir) : vec3(0.0f, -1.0f, 0.0f);
+    float sunOn = (frame.lightingParams.x > 0.5) ? 1.0 : 0.0;
+    float diffuse = max(dot(normalize(vWorldNormal), -sunDir), 0.0f) * sunOn;
     float ambient = 0.35f;
     float light = ambient + diffuse * 0.65f;
 

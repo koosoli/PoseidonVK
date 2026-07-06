@@ -116,8 +116,9 @@ smoke-testable.
   constant, and draw a lit mesh through the descriptor-set path.
 - [x] Drive fog from the uploaded frame constants in the scene fragment shader
   (vertex-computed fog factor mixed toward frame.fogColor).
-- [ ] Drive directional/local lighting from the uploaded frame constants in the
-  scene shaders (currently a fixed directional light).
+- [x] Drive directional sun lighting from the uploaded frame constants in the
+  scene shaders.
+- [ ] Add local light extraction and scene-shader consumption.
 - [ ] Upload static and dynamic mesh buffers through backend-owned resources.
 - [ ] Implement texture creation, sampler state, mip use, and fallback behavior.
 - [ ] Build complete Vulkan scene pipeline state from the existing render-pass

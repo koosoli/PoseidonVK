@@ -38,6 +38,9 @@ frame::Frame makeFrame()
     inputs.sunMatrix._33 = 11.0f;
     inputs.sunMatrix._44 = 12.0f;
     inputs.sunEnabled = true;
+    inputs.sunDirection[0] = 0.25f;
+    inputs.sunDirection[1] = -0.75f;
+    inputs.sunDirection[2] = 0.5f;
     inputs.fogStart = 25.0f;
     inputs.fogEnd = 125.0f;
     inputs.fogColorRGBA = 0x336699ccu;
@@ -60,7 +63,8 @@ TEST_CASE("Vulkan frame constants match std140 descriptor layout", "[vulkan][fra
     STATIC_REQUIRE(offsetof(FrameConstantsVK, fogParams) == 240);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, fogColor) == 256);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, lightingParams) == 272);
-    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 288);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, sunDirection) == 288);
+    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 304);
 }
 
 TEST_CASE("Vulkan mapped buffer upload copies frame constants bytes", "[vulkan][frame-constants]")
@@ -103,6 +107,10 @@ TEST_CASE("Vulkan frame constants preserve frame camera matrices", "[vulkan][fra
     CHECK(constants.sunMatrix._22 == 10.0f);
     CHECK(constants.sunMatrix._33 == 11.0f);
     CHECK(constants.sunMatrix._44 == 12.0f);
+    CHECK(constants.sunDirection[0] == 0.25f);
+    CHECK(constants.sunDirection[1] == -0.75f);
+    CHECK(constants.sunDirection[2] == 0.5f);
+    CHECK(constants.sunDirection[3] == 0.0f);
 }
 
 TEST_CASE("Vulkan frame constants expose viewport and world rect", "[vulkan][frame-constants]")

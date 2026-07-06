@@ -21,6 +21,7 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 fogParams;
     vec4 fogColor;
     vec4 lightingParams;
+    vec4 sunDirection;
 } frame;
 
 void main()
