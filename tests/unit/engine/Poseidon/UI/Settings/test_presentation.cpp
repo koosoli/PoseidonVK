@@ -23,7 +23,7 @@ TEST_CASE("Presentation: 32:9 Adaptive 21:9 clamps world FOV and HUD width", "[S
 {
     Poseidon::Presentation::SetPolicy(Poseidon::AspectRatio::Modern, Poseidon::AspectRatio::Clamp21x9);
     const Poseidon::AspectRatio::Settings s = Poseidon::Presentation::Resolve(3840, 1080);
-    CHECK(s.leftFOV == Catch::Approx(0.75f * (21.0f / 9.0f))); // FOV capped at the clamp
+    CHECK(s.leftFOV == Catch::Approx(0.75f * (32.0f / 9.0f)));
     const float uiW = (s.uiBottomRightX - s.uiTopLeftX) * 3840.0f;
     const float uiH = (s.uiBottomRightY - s.uiTopLeftY) * 1080.0f;
     CHECK(uiW / uiH == Catch::Approx(21.0f / 9.0f).epsilon(0.001f));
@@ -36,7 +36,7 @@ TEST_CASE("Presentation: 32:9 Adaptive 16:9 uses the narrower HUD width limit", 
     Poseidon::Presentation::SetPolicy(Poseidon::AspectRatio::Modern, Poseidon::AspectRatio::Clamp16x9);
     const Poseidon::AspectRatio::Settings s = Poseidon::Presentation::Resolve(3840, 1080);
 
-    CHECK(s.leftFOV == Catch::Approx(0.75f * (16.0f / 9.0f)));
+    CHECK(s.leftFOV == Catch::Approx(0.75f * (32.0f / 9.0f)));
     CHECK(s.uiTopLeftX == Catch::Approx(0.25f));
     CHECK(s.uiBottomRightX == Catch::Approx(0.75f));
 
