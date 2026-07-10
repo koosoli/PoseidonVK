@@ -1974,8 +1974,16 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 if (mesh->indexBuffer)
                     vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-                const vk::ScenePushConstantsVK constants = vk::BuildScenePushConstants(
-                    vk::FrameConstantsVK{}.projection, true, command.drawIndex);
+                // Push the real per-draw world matrix so the shader's fallback
+                // path (used when useDrawConstants is false) also matches. With
+                // useDrawConstants=true the shader prefers draws[drawIndex].world
+                // from the SSBO; this push constant keeps the two paths in sync.
+                const GfxMatrix& drawWorld =
+                    (command.drawIndex < _lastDrawConstants.size())
+                        ? _lastDrawConstants[command.drawIndex].world
+                        : vk::BuildIdentityScenePushConstants().world;
+                const vk::ScenePushConstantsVK constants =
+                    vk::BuildScenePushConstants(drawWorld, true, command.drawIndex);
                 vkCmdPushConstants(commandBuffer, _scenePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                                    vk::kScenePushConstantsSize, &constants);
 
@@ -1992,10 +2000,12 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                     vkCmdDrawIndexed(commandBuffer, indexCount, 1, firstIndex, 0, 0);
             }
         }
-        else
+        else if (_hasFrameConstants)
         {
-            // No frame plan yet: draw the bring-up quad with identity world so the
-            // scene pipeline produces visible output before SubmitFramePlan arrives.
+            // No drawable scene commands yet, but frame constants are available:
+            // draw the bring-up quad under the real camera transform so the scene
+            // pipeline stays exercised until real meshes arrive. Before the first
+            // frame plan (no constants yet) only the bootstrap triangle shows.
             if (_fallbackWhiteTexture)
             {
                 VkDescriptorSet fallbackSet = _fallbackWhiteTexture->GetDescriptorSet();

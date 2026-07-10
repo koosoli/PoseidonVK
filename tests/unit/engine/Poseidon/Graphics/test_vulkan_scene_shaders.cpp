@@ -203,6 +203,19 @@ TEST_CASE("Vulkan scene shaders declare the world push constant", "[vulkan][scen
     CHECK(vertexSource.find("mat4 world;") != std::string::npos);
 }
 
+TEST_CASE("Vulkan scene vertex shader applies the full camera projection", "[vulkan][scene-shaders]")
+{
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const std::string vertexSource = ReadTextFile(shaderDir / "scene.vert.glsl");
+
+    // The scene pipeline must apply the real proj*view*world transform, mirroring
+    // the GL33 vsTransform convention (gl_Position = proj * view * world * pos).
+    // The bring-up hack that bypassed the camera (gl_Position = vec4(worldPos.xy,
+    // 0.0, 1.0)) must be gone so real world-space meshes render correctly.
+    CHECK(vertexSource.find("gl_Position = frame.projection * viewPos;") != std::string::npos);
+    CHECK(vertexSource.find("vec4(worldPos.xy, 0.0, 1.0)") == std::string::npos);
+}
+
 TEST_CASE("Vulkan scene push constants match the shader contract", "[vulkan][scene-shaders]")
 {
     using Poseidon::vk::ScenePushConstantsVK;

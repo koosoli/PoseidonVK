@@ -77,12 +77,12 @@ void main()
     vec4 worldPos = world * vec4(inPosition, 1.0);
     vec3 worldNormal = normalize(mat3(world) * inNormal);
 
-    // Bring-up placement: the quad's vertex positions are already in NDC XY
-    // (range roughly [-0.4..0.8] x [-0.4..0.4]), so it is visible regardless of
-    // the game camera. The full proj*view*world transform activates when this
-    // pipeline draws real scene meshes whose positions are in world space; the
-    // matrix path is already covered by the GL33 parity tests.
-    gl_Position = vec4(worldPos.xy, 0.0, 1.0);
+    // Full camera transform mirroring the GL33 vsTransform convention
+    // (gl_Position = proj * view * world * pos). frame.projection already
+    // carries the engine's D3D-origin row-major projection, which maps to the
+    // Vulkan 0..1 depth range the depth attachment uses.
+    vec4 viewPos = frame.view * worldPos;
+    gl_Position = frame.projection * viewPos;
 
     vWorldPos = worldPos.xyz;
     vWorldNormal = worldNormal;
@@ -94,7 +94,6 @@ void main()
     // length), factor = clamp(1 - (dist - start) * invRange). fogParams.w carries
     // the enabled flag (1.0 = on); when off the factor is forced to 1.0 (no fog).
     // The fragment shader then mixes toward frame.fogColor by this factor.
-    vec4 viewPos = frame.view * worldPos;
     float dist = length(viewPos.xyz);
     float fogFactor = clamp(1.0 - (dist - frame.fogParams.x) * frame.fogParams.z, 0.0, 1.0);
     vFogFactor = (frame.fogParams.w > 0.5) ? fogFactor : 1.0;
