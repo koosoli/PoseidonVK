@@ -72,6 +72,7 @@ int VsyncToInterval(GraphicsConfig::VsyncMode v)
 
 void ApplyGraphicsConfigToEngine(const GraphicsConfig& cfg)
 {
+    const bool shadowsOn = cfg.shadowQuality != GraphicsConfig::TierOff;
     if (GScene)
     {
         GScene->SetPreferredTerrainGrid(TerrainTierToGrid(cfg.terrainDetail));
@@ -79,7 +80,6 @@ void ApplyGraphicsConfigToEngine(const GraphicsConfig& cfg)
         // Shadow tier — Off → both off; Low+ → both on.  Low/Med/High
         // discrimination is UI-only until a shadow-distance bias hook
         // lands.
-        const bool shadowsOn = cfg.shadowQuality != GraphicsConfig::TierOff;
         GScene->SetObjectShadows(shadowsOn);
         GScene->SetVehicleShadows(shadowsOn);
         // Particles tier — Off → cloudlets off; Low/High → on.  Low vs
@@ -94,6 +94,50 @@ void ApplyGraphicsConfigToEngine(const GraphicsConfig& cfg)
         GEngine->SetAlphaToCoverage(cfg.alphaToCoverage);
         GEngine->SetRenderScale(cfg.renderScale);
         GEngine->SetMsaaSamples(cfg.msaaSamples);
+
+        // Enable / disable cascade shadow-map depth-buffer shadows.
+        // When on, SceneDraw.cpp's GEngine->ShadowMapsEnabled() gate opens
+        // and RenderShadowMapDepthPass runs each frame.
+        GEngine->SetShadowMapsEnabled(shadowsOn);
+
+        if (shadowsOn)
+        {
+            // Map the four quality tiers to concrete tuning parameters.
+            // Cascade count and resolution are the main quality levers;
+            // bias / darkness / fade are kept constant — they can be
+            // exposed as advanced sliders later.
+            Engine::ShadowMapTuning tuning;
+            tuning.enabled = true;
+            switch (cfg.shadowQuality)
+            {
+                case GraphicsConfig::TierLow:
+                    tuning.cascadeCount = 2;
+                    tuning.resolution   = 1024;
+                    tuning.omniCount    = 1;
+                    break;
+                case GraphicsConfig::TierMedium:
+                    tuning.cascadeCount = 3;
+                    tuning.resolution   = 1024;
+                    tuning.omniCount    = 1;
+                    break;
+                case GraphicsConfig::TierHigh:
+                    tuning.cascadeCount = 4;
+                    tuning.resolution   = 2048;
+                    tuning.omniCount    = 2;
+                    break;
+                case GraphicsConfig::TierUltra:
+                    tuning.cascadeCount = 4;
+                    tuning.resolution   = 4096;
+                    tuning.omniCount    = 2;
+                    break;
+                default:
+                    tuning.cascadeCount = 4;
+                    tuning.resolution   = 2048;
+                    tuning.omniCount    = 2;
+                    break;
+            }
+            GEngine->SetShadowMapTuning(tuning);
+        }
     }
     gUserFpsCap = cfg.fpsCap;
 }

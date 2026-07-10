@@ -67,7 +67,7 @@ FormatInfo PacFormatToVk(PacFormat fmt)
         case PacARGB4444:  return {VK_FORMAT_R8G8B8A8_UNORM, false}; // transcoded in UploadMips
         case PacARGB1555:  return {VK_FORMAT_R8G8B8A8_UNORM, false}; // transcoded in UploadMips
         case PacRGB565:    return {VK_FORMAT_R5G6B5_UNORM_PACK16, false};
-        case PacAI88:      return {VK_FORMAT_R8G8_UNORM, false};
+        case PacAI88:      return {VK_FORMAT_R8G8B8A8_UNORM, false}; // transcoded in UploadMips: [grey,alpha]->[grey,grey,grey,alpha]
         default:           return {VK_FORMAT_R8G8B8A8_UNORM, false};
     }
 }
@@ -278,7 +278,12 @@ bool TextureVK::UploadMips()
     const bool transcode4444 = (sharedFmt == PacARGB4444);
     const bool transcode1555 = (sharedFmt == PacARGB1555);
     const bool transcode8888 = (sharedFmt == PacARGB8888);
-    const bool needsTranscode = transcode4444 || transcode1555 || transcode8888;
+    // PacAI88: two bytes per pixel [grey, alpha].  VK_FORMAT_R8G8_UNORM would
+    // put grey in .r and alpha in .g, leaving .a = 1.0 as Vulkan defines for a
+    // 2-channel format — alpha tests never fire.  We upload as RGBA8 instead,
+    // replicating grey to RGB and copying alpha to the A channel.
+    const bool transcodeAI88 = (sharedFmt == PacAI88);
+    const bool needsTranscode = transcode4444 || transcode1555 || transcode8888 || transcodeAI88;
 
     for (int i = 0; i < _nMipmaps; ++i)
     {
@@ -296,6 +301,7 @@ bool TextureVK::UploadMips()
 
         // Allocate staging buffer. Transcoded formats are always 4 bytes/pixel
         // (RGBA8) regardless of source width: 16-bit formats expand, 8888 swaps in-place.
+        // AI88 expands from 2 bytes/pixel to 4 bytes/pixel.
         const std::size_t pixelCount = static_cast<std::size_t>(srcMip._w) * static_cast<std::size_t>(srcMip._h);
         const std::size_t uploadSize = needsTranscode ? pixelCount * 4u : dataSize;
 
@@ -358,6 +364,20 @@ bool TextureVK::UploadMips()
                     dst8[p * 4 + 1] = (g  << 3) | (g  >> 2);
                     dst8[p * 4 + 2] = (b  << 3) | (b  >> 2);
                     dst8[p * 4 + 3] = a ? 255u : 0u;
+                }
+            }
+            else if (transcodeAI88)
+            {
+                // [grey8, alpha8] → [grey8, grey8, grey8, alpha8]
+                const uint8_t* src8 = reinterpret_cast<const uint8_t*>(pixelData.data());
+                for (std::size_t p = 0; p < pixelCount; ++p)
+                {
+                    const uint8_t grey  = src8[p * 2 + 0];
+                    const uint8_t alpha = src8[p * 2 + 1];
+                    dst8[p * 4 + 0] = grey;
+                    dst8[p * 4 + 1] = grey;
+                    dst8[p * 4 + 2] = grey;
+                    dst8[p * 4 + 3] = alpha;
                 }
             }
             else // transcode8888: raw bytes [A,R,G,B] → [R,G,B,A]
