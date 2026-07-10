@@ -7,6 +7,8 @@
 #include <PoseidonVK/PipelineCacheVK.hpp>
 #include <PoseidonVK/SceneDrawCommandsVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
+#include <PoseidonVK/ScreenPushConstantsVK.hpp>
+#include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
 #include <Poseidon/Graphics/Shared/WindowMode.hpp>
 #include <vulkan/vulkan.h>
@@ -47,6 +49,19 @@ class EngineVK : public EngineDummy
     void PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec& spec) override;
     void PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorld, const render::LegacySpec& spec) override;
     AbstractTextBank* TextBank() override;
+
+    // --- 2D / HUD / text screen-space draw path ---
+    // These override the EngineDummy no-ops so the menu, HUD, and text render
+    // under Vulkan. Each call buffers a TLVertex quad into CPU-side vectors
+    // (cleared per frame in InitDraw); the recorded batches are emitted inside
+    // RecordBootstrapCommand after the 3D scene block.
+    void Draw2D(const Draw2DPars& pars, const Rect2DAbs& rect, const Rect2DAbs& clip) override;
+    void DrawPoly(const MipInfo& mip, const Vertex2DAbs* vertices, int nVertices,
+                  const Rect2DAbs& clip, int specFlags) override;
+    void DrawPoly(const MipInfo& mip, const Vertex2DPixel* vertices, int nVertices,
+                  const Rect2DPixel& clip, int specFlags) override;
+    void DrawLine(const Line2DAbs& line, PackedColor c0, PackedColor c1, const Rect2DAbs& clip) override;
+
     bool IsOpen() const override { return _open; }
     void SetMouseGrab(bool grab) override;
     bool IsMouseGrabbed() const override { return _mouseGrab; }
@@ -84,6 +99,16 @@ class EngineVK : public EngineDummy
     VkFormat FindDepthFormat() const;
     bool CreateBootstrapPipeline();
     bool CreateScenePipeline();
+    bool CreateScreenPipeline();
+    bool CreateScreenPipelineLayout();
+    bool CreateScreenDescriptorLayout();
+    bool EnsureScreenVertexBufferCapacity(std::size_t vertexCount, std::size_t indexCount);
+    void DestroyScreenPipeline();
+    void DestroyScreenPipelineLayout();
+    void DestroyScreenDescriptorResources();
+    void DestroyScreenVertexBuffer();
+    void RecordScreenDraws(VkCommandBuffer commandBuffer);
+    void PushScreenQuad(const TLVertex* quad, std::uint32_t textureId);
     bool CreateCommandPool();
     bool CreateSyncObjects();
     bool RecordBootstrapCommand(uint32_t imageIndex);
@@ -145,6 +170,16 @@ class EngineVK : public EngineDummy
     VkShaderModule _sceneVertexModule = VK_NULL_HANDLE;
     VkShaderModule _sceneFragmentModule = VK_NULL_HANDLE;
     vk::PipelineCacheVK _scenePipelineCache;
+    // 2D / screen-space pipeline resources.
+    VkPipeline _screenPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout _screenPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _screenDescriptorSetLayout = VK_NULL_HANDLE;
+    VkShaderModule _screenVertexModule = VK_NULL_HANDLE;
+    VkShaderModule _screenFragmentModule = VK_NULL_HANDLE;
+    vk::BufferVK _screenVertexBuffer;
+    vk::BufferVK _screenIndexBuffer;
+    std::size_t _screenVertexCapacity = 0;
+    std::size_t _screenIndexCapacity = 0;
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D _swapchainExtent{};
@@ -188,6 +223,19 @@ class EngineVK : public EngineDummy
     std::vector<DrawItem> _drawItems;
     DrawItem _currentDrawItem;
     std::uint32_t _lastTexture1ResourceId = 1;
+
+    // Per-frame 2D draw accumulation. Vertices/indices are built during the
+    // game's Draw2D/DrawPoly/DrawLine calls and emitted in RecordScreenDraws.
+    // _screenBatches records (textureId, indexCount) run-length boundaries so
+    // the emit loop can bind a new descriptor set only when the texture changes.
+    std::vector<TLVertex> _screenVertices;
+    std::vector<std::uint16_t> _screenIndices;
+    struct ScreenBatchVK
+    {
+        std::uint32_t textureId = 0;
+        std::uint32_t indexCount = 0;
+    };
+    std::vector<ScreenBatchVK> _screenBatches;
 
     TextBankVK* _textBank = nullptr;
     std::unordered_map<std::uint32_t, TextureVK*> _textureRegistry;

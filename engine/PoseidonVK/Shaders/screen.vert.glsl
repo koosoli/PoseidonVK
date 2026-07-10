@@ -4,8 +4,9 @@
 //
 // Mirrors the GL33 vsScreen convention: vertices are pre-transformed
 // (D3DFVF_XYZRHW). pos.xy is in screen pixel coordinates; a 2-vector
-// vpScale = {2/width, 2/height} maps pixels to [-1,+1] clip range with a
-// Y flip so a top-left screen origin becomes Vulkan's bottom-left NDC.
+// vpScale = {2/width, 2/height} maps pixels to [-1,+1] clip range.
+// In Vulkan NDC y=-1 is the TOP of the framebuffer, so pixel y=0 (top)
+// maps to y_ndc=-1 and pixel y=height (bottom) maps to y_ndc=+1.
 // rhw is the reciprocal-w; for typical 2D draws rhw = 1.0.
 //
 // Vertex layout matches the shared TLVertex struct (pos.xyz, rhw, color,
@@ -29,7 +30,7 @@ void main()
 {
     float w = 1.0 / inRhw;
     gl_Position.x = (inPosition.x * pc.vpScale.x - 1.0) * w;
-    gl_Position.y = (1.0 - inPosition.y * pc.vpScale.y) * w;
+    gl_Position.y = (inPosition.y * pc.vpScale.y - 1.0) * w;
     gl_Position.z = inPosition.z * w;
     gl_Position.w = w;
 

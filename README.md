@@ -129,7 +129,8 @@ smoke-testable.
 - [x] Implement texture creation, sampler state, mip use, and fallback behavior.
 - [x] Build complete Vulkan scene pipeline state from the existing render-pass
   descriptors.
-- [ ] Render terrain, models, sky, water, cockpit, HUD, text, and shadow passes.
+- [x] Render main menu overlays, HUD, lines, polygons, and text via the 2D screen pipeline.
+- [ ] Render terrain, models, sky, water, cockpit, and shadow passes in the 3D scene pipeline.
 - [ ] Add screenshot or frame-observation checks to compare Vulkan against GL33.
 
 ### Phase 3 - Modern Assets And Streaming

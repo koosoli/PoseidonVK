@@ -7,6 +7,9 @@
 #include <Poseidon/Graphics/Core/MatrixConversion.hpp>
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
+#include <Poseidon/Graphics/Rendering/Primitives/Clip2D.hpp>
+#include <Poseidon/Graphics/Textures/TexturePreload.hpp>
+#include <Poseidon/Graphics/Textures/TextureBank.hpp>
 #include <unordered_map>
 #include <PoseidonVK/BufferVK.hpp>
 #include <PoseidonVK/DescriptorBindingsVK.hpp>
@@ -78,6 +81,12 @@ constexpr const char kSceneVertexShader[] =
     ;
 constexpr const char kSceneFragmentShader[] =
 #include <PoseidonVK/Shaders/scene.frag.glsl.hpp>
+    ;
+constexpr const char kScreenVertexShader[] =
+#include <PoseidonVK/Shaders/screen.vert.glsl.hpp>
+    ;
+constexpr const char kScreenFragmentShader[] =
+#include <PoseidonVK/Shaders/screen.frag.glsl.hpp>
     ;
 
 // Scene mesh vertex matching the SVertex contract (pos, norm, uv) consumed by
@@ -430,6 +439,7 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
         !CreatePipelineLayout() || !CreateTextureDescriptorPool() ||
         !CreateScenePipelineLayout() || !CreateFrameDescriptorSet() ||
         !CreateCommandPool() || !CreateSwapchain() || !CreateBootstrapPipeline() || !CreateScenePipeline() ||
+        !CreateScreenDescriptorLayout() || !CreateScreenPipelineLayout() || !CreateScreenPipeline() ||
         !CreateSyncObjects())
     {
         Shutdown();
@@ -458,8 +468,9 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
 
     LOG_INFO(Graphics, "Vulkan: bootstrap initialized {}x{} mode={} graphics_queue={} present_queue={}", _width,
              _height, static_cast<int>(_windowMode), _graphicsQueueFamily, _presentQueueFamily);
-    LOG_WARN(Graphics, "Vulkan: scene rendering is not implemented yet; bootstrap currently presents a validation "
-                       "triangle only");
+    LOG_WARN(Graphics, "Vulkan: scene raster parity is in progress; 3D scene draws use the real camera transform "
+                       "and 2D/HUD/text draws go through the screen pipeline. Sky/water/shadow passes are not yet "
+                       "implemented.");
 
     _textBank = new TextBankVK(*this);
 
@@ -874,6 +885,72 @@ bool EngineVK::EnsureDrawConstantsBufferCapacity(std::size_t drawCount)
                   "PoseidonVK Draw Constants Memory");
     if (_frameDescriptorSet)
         UpdateFrameDescriptorSet();
+    return true;
+}
+
+bool EngineVK::EnsureScreenVertexBufferCapacity(std::size_t vertexCount, std::size_t indexCount)
+{
+    bool needVUpdate = vertexCount > 0 && _screenVertexCapacity < vertexCount;
+    bool needIUpdate = indexCount > 0 && _screenIndexCapacity < indexCount;
+
+    if (!needVUpdate && !needIUpdate)
+        return true;
+
+    if (!_physicalDevice || !_device)
+        return false;
+
+    vkDeviceWaitIdle(_device);
+
+    if (needVUpdate)
+    {
+        std::size_t newCap = std::max<std::size_t>(_screenVertexCapacity * 2, 1024);
+        while (newCap < vertexCount)
+            newCap *= 2;
+
+        vk::BufferVK replacement;
+        const VkResult result = vk::CreateHostVisibleBuffer(_physicalDevice, _device, newCap * sizeof(TLVertex),
+                                                            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, replacement);
+        if (result != VK_SUCCESS)
+        {
+            LOG_ERROR(Graphics, "Vulkan: screen vertex buffer creation failed: {}", VkResultName(result));
+            return false;
+        }
+
+        vk::DestroyBuffer(_device, _screenVertexBuffer);
+        _screenVertexBuffer = replacement;
+        _screenVertexCapacity = newCap;
+
+        SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_screenVertexBuffer.buffer),
+                      "PoseidonVK Screen Vertex Buffer");
+        SetObjectName(VK_OBJECT_TYPE_DEVICE_MEMORY, VulkanObjectHandle(_screenVertexBuffer.memory),
+                      "PoseidonVK Screen Vertex Memory");
+    }
+
+    if (needIUpdate)
+    {
+        std::size_t newCap = std::max<std::size_t>(_screenIndexCapacity * 2, 2048);
+        while (newCap < indexCount)
+            newCap *= 2;
+
+        vk::BufferVK replacement;
+        const VkResult result = vk::CreateHostVisibleBuffer(_physicalDevice, _device, newCap * sizeof(std::uint16_t),
+                                                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, replacement);
+        if (result != VK_SUCCESS)
+        {
+            LOG_ERROR(Graphics, "Vulkan: screen index buffer creation failed: {}", VkResultName(result));
+            return false;
+        }
+
+        vk::DestroyBuffer(_device, _screenIndexBuffer);
+        _screenIndexBuffer = replacement;
+        _screenIndexCapacity = newCap;
+
+        SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_screenIndexBuffer.buffer),
+                      "PoseidonVK Screen Index Buffer");
+        SetObjectName(VK_OBJECT_TYPE_DEVICE_MEMORY, VulkanObjectHandle(_screenIndexBuffer.memory),
+                      "PoseidonVK Screen Index Memory");
+    }
+
     return true;
 }
 
@@ -1705,6 +1782,195 @@ bool EngineVK::CreateScenePipeline()
     return true;
 }
 
+bool EngineVK::CreateScreenDescriptorLayout()
+{
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &binding;
+
+    const VkResult result = vkCreateDescriptorSetLayout(_device, &createInfo, nullptr, &_screenDescriptorSetLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: vkCreateDescriptorSetLayout(screen) failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_screenDescriptorSetLayout),
+                  "PoseidonVK Screen Descriptor Set Layout");
+    return true;
+}
+
+bool EngineVK::CreateScreenPipelineLayout()
+{
+    VkDescriptorSetLayout setLayouts[] = {_screenDescriptorSetLayout};
+
+    VkPushConstantRange pushConstants{};
+    pushConstants.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstants.offset = 0;
+    pushConstants.size = vk::kScreenPushConstantsSize;
+
+    VkPipelineLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    createInfo.setLayoutCount = 1;
+    createInfo.pSetLayouts = setLayouts;
+    createInfo.pushConstantRangeCount = 1;
+    createInfo.pPushConstantRanges = &pushConstants;
+
+    const VkResult result = vkCreatePipelineLayout(_device, &createInfo, nullptr, &_screenPipelineLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: screen pipeline layout creation failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_screenPipelineLayout),
+                  "PoseidonVK Screen Pipeline Layout");
+    return true;
+}
+
+bool EngineVK::CreateScreenPipeline()
+{
+    std::vector<uint32_t> vertexSpirv;
+    std::vector<uint32_t> fragmentSpirv;
+    std::string error;
+    if (!CompileBootstrapShader(kScreenVertexShader, EShLangVertex, vertexSpirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: screen vertex shader compile failed: {}", error);
+        return false;
+    }
+    if (!CompileBootstrapShader(kScreenFragmentShader, EShLangFragment, fragmentSpirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: screen fragment shader compile failed: {}", error);
+        return false;
+    }
+
+    auto createShaderModule = [&](const std::vector<uint32_t>& spirv, const char* name, VkShaderModule& module)
+    {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = spirv.size() * sizeof(uint32_t);
+        createInfo.pCode = spirv.data();
+        const VkResult result = vkCreateShaderModule(_device, &createInfo, nullptr, &module);
+        if (result != VK_SUCCESS)
+        {
+            LOG_ERROR(Graphics, "Vulkan: vkCreateShaderModule failed for {}: {}", name, VkResultName(result));
+            return false;
+        }
+        SetObjectName(VK_OBJECT_TYPE_SHADER_MODULE, VulkanObjectHandle(module), name);
+        return true;
+    };
+
+    VkShaderModule vertexModule = VK_NULL_HANDLE;
+    VkShaderModule fragmentModule = VK_NULL_HANDLE;
+    if (!createShaderModule(vertexSpirv, "PoseidonVK Screen Vertex Shader", vertexModule) ||
+        !createShaderModule(fragmentSpirv, "PoseidonVK Screen Fragment Shader", fragmentModule))
+    {
+        if (vertexModule)
+            vkDestroyShaderModule(_device, vertexModule, nullptr);
+        if (fragmentModule)
+            vkDestroyShaderModule(_device, fragmentModule, nullptr);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertexModule;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragmentModule;
+    shaderStages[1].pName = "main";
+
+    const VkVertexInputBindingDescription vertexBinding = vk::MakeScreenVertexBindingDescription();
+    const std::array<VkVertexInputAttributeDescription, vk::kScreenVertexAttributeCount> vertexAttributes =
+        vk::MakeScreenVertexAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &vertexBinding;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributes.size());
+    vertexInput.pVertexAttributeDescriptions = vertexAttributes.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(_swapchainExtent.width);
+    viewport.height = static_cast<float>(_swapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = _swapchainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer =
+        vk::BuildRasterizationState(render::CullMode::None, render::FrontFaceMode::CW);
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil =
+        vk::BuildDepthStencilState(render::DepthMode::Disabled);
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment =
+        vk::BuildColorBlendAttachmentState(render::BlendMode::AlphaBlend);
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.layout = _screenPipelineLayout;
+    pipelineInfo.renderPass = _renderPass;
+    pipelineInfo.subpass = 0;
+
+    const VkResult result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                                      &_screenPipeline);
+
+    _screenVertexModule = vertexModule;
+    _screenFragmentModule = fragmentModule;
+
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: screen pipeline creation failed: {}", VkResultName(result));
+        return false;
+    }
+
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_screenPipeline), "PoseidonVK Screen Pipeline");
+    LOG_INFO(Graphics, "Vulkan: screen pipeline created");
+    return true;
+}
+
 bool EngineVK::CreateSyncObjects()
 {
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -2030,6 +2296,7 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                                vk::kScenePushConstantsSize, &sceneConstants);
             vkCmdDrawIndexed(commandBuffer, kSceneQuadIndexCount, 1, 0, 0, 0);
         }
+        RecordScreenDraws(commandBuffer);
     }
     vkCmdEndRenderPass(commandBuffer);
 
@@ -2055,6 +2322,11 @@ void EngineVK::DestroySwapchain()
     {
         vkDestroyPipeline(_device, _bootstrapPipeline, nullptr);
         _bootstrapPipeline = VK_NULL_HANDLE;
+    }
+    if (_screenPipeline)
+    {
+        vkDestroyPipeline(_device, _screenPipeline, nullptr);
+        _screenPipeline = VK_NULL_HANDLE;
     }
 
     for (VkFramebuffer framebuffer : _framebuffers)
@@ -2154,6 +2426,57 @@ void EngineVK::DestroyScenePipelineLayout()
     }
 }
 
+void EngineVK::DestroyScreenPipeline()
+{
+    if (_device && _screenPipeline)
+    {
+        vkDestroyPipeline(_device, _screenPipeline, nullptr);
+        _screenPipeline = VK_NULL_HANDLE;
+    }
+}
+
+void EngineVK::DestroyScreenPipelineLayout()
+{
+    if (_device)
+    {
+        if (_screenFragmentModule)
+        {
+            vkDestroyShaderModule(_device, _screenFragmentModule, nullptr);
+            _screenFragmentModule = VK_NULL_HANDLE;
+        }
+        if (_screenVertexModule)
+        {
+            vkDestroyShaderModule(_device, _screenVertexModule, nullptr);
+            _screenVertexModule = VK_NULL_HANDLE;
+        }
+        if (_screenPipelineLayout)
+        {
+            vkDestroyPipelineLayout(_device, _screenPipelineLayout, nullptr);
+            _screenPipelineLayout = VK_NULL_HANDLE;
+        }
+    }
+}
+
+void EngineVK::DestroyScreenDescriptorResources()
+{
+    if (_device)
+    {
+        if (_screenDescriptorSetLayout)
+        {
+            vkDestroyDescriptorSetLayout(_device, _screenDescriptorSetLayout, nullptr);
+            _screenDescriptorSetLayout = VK_NULL_HANDLE;
+        }
+    }
+}
+
+void EngineVK::DestroyScreenVertexBuffer()
+{
+    vk::DestroyBuffer(_device, _screenVertexBuffer);
+    vk::DestroyBuffer(_device, _screenIndexBuffer);
+    _screenVertexCapacity = 0;
+    _screenIndexCapacity = 0;
+}
+
 bool EngineVK::RecreateSwapchain()
 {
     if (!_device)
@@ -2162,7 +2485,7 @@ bool EngineVK::RecreateSwapchain()
     vkDeviceWaitIdle(_device);
     DestroySwapchain();
     const bool recreated =
-        CreateSwapchain() && CreateBootstrapPipeline() && CreateScenePipeline() && CreateSyncObjects();
+        CreateSwapchain() && CreateBootstrapPipeline() && CreateScenePipeline() && CreateScreenPipeline() && CreateSyncObjects();
     _swapchainDirty = !recreated;
     return recreated;
 }
@@ -2285,6 +2608,10 @@ void EngineVK::Shutdown()
         _bootstrapMeshId = 0;
         DestroySceneVertexBuffer();
         DestroySceneIndexBuffer();
+        DestroyScreenPipeline();
+        DestroyScreenPipelineLayout();
+        DestroyScreenDescriptorResources();
+        DestroyScreenVertexBuffer();
         vkDestroyDevice(_device, nullptr);
         _device = VK_NULL_HANDLE;
     }
@@ -2456,6 +2783,9 @@ void EngineVK::InitDraw(bool clear, PackedColor color)
     Engine::InitDraw(clear, color);
     _drawItems.clear();
     _currentDrawItem = DrawItem{};
+    _screenVertices.clear();
+    _screenIndices.clear();
+    _screenBatches.clear();
 }
 
 VertexBuffer* EngineVK::CreateVertexBuffer(const Shape& src, VBType type)
@@ -2520,6 +2850,505 @@ void EngineVK::PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorl
     _currentDrawItem.worldMatrix = worldMatrix;
     _currentDrawItem.specFlags = spec;
     _currentDrawItem.bias = GetBias();
+}
+
+void EngineVK::Draw2D(const Draw2DPars& pars, const Rect2DAbs& rect, const Rect2DAbs& clip)
+{
+    PoseidonAssert(pars.mip.IsOK());
+    if (!pars.mip.IsOK())
+    {
+        return;
+    }
+
+    if (!_device)
+    {
+        return;
+    }
+
+    float xBeg = rect.x, xEnd = xBeg + rect.w;
+    float yBeg = rect.y, yEnd = yBeg + rect.h;
+
+    float uBeg = 0;
+    float vBeg = 0;
+    float uEnd = 1;
+    float vEnd = 1;
+
+    float xc = floatMax(clip.x, 0);
+    float yc = floatMax(clip.y, 0);
+    float xec = floatMin(clip.x + clip.w, _width);
+    float yec = floatMin(clip.y + clip.h, _height);
+
+    if (xBeg < xc)
+    {
+        uBeg = (xc - xBeg) / rect.w;
+        xBeg = xc;
+    }
+    if (xEnd > xec)
+    {
+        uEnd = 1 - (xEnd - xec) / rect.w;
+        xEnd = xec;
+    }
+    if (yBeg < yc)
+    {
+        vBeg = (yc - yBeg) / rect.h;
+        yBeg = yc;
+    }
+    if (yEnd > yec)
+    {
+        vEnd = 1 - (yEnd - yec) / rect.h;
+        yEnd = yec;
+    }
+
+    if (xBeg >= xEnd || yBeg >= yEnd)
+    {
+        return;
+    }
+
+    TLVertex pos[4];
+    pos[0].rhw = 1;
+    pos[0].color = pars.colorTL;
+    pos[0].specular = PackedColor(0xff000000);
+    pos[0].pos[2] = 0.5;
+
+    pos[1].rhw = 1;
+    pos[1].color = pars.colorTR;
+    pos[1].specular = PackedColor(0xff000000);
+    pos[1].pos[2] = 0.5;
+
+    pos[2].rhw = 1;
+    pos[2].color = pars.colorBR;
+    pos[2].specular = PackedColor(0xff000000);
+    pos[2].pos[2] = 0.5;
+
+    pos[3].rhw = 1;
+    pos[3].color = pars.colorBL;
+    pos[3].specular = PackedColor(0xff000000);
+    pos[3].pos[2] = 0.5;
+
+    float uTL = pars.uTL + uBeg * (pars.uTR - pars.uTL) + vBeg * (pars.uBL - pars.uTL);
+    float uTR = pars.uTL + uEnd * (pars.uTR - pars.uTL) + vBeg * (pars.uBL - pars.uTL);
+    float uBL = pars.uTL + uBeg * (pars.uTR - pars.uTL) + vEnd * (pars.uBL - pars.uTL);
+    float uBR = pars.uTL + uEnd * (pars.uTR - pars.uTL) + vEnd * (pars.uBL - pars.uTL);
+
+    float vTL = pars.vTL + uBeg * (pars.vTR - pars.vTL) + vBeg * (pars.vBL - pars.vTL);
+    float vTR = pars.vTL + uEnd * (pars.vTR - pars.vTL) + vBeg * (pars.vBL - pars.vTL);
+    float vBL = pars.vTL + uBeg * (pars.vTR - pars.vTL) + vEnd * (pars.vBL - pars.vTL);
+    float vBR = pars.vTL + uEnd * (pars.vTR - pars.vTL) + vEnd * (pars.vBL - pars.vTL);
+
+    pos[0].pos[0] = xBeg, pos[0].pos[1] = yBeg;
+    pos[1].pos[0] = xEnd, pos[1].pos[1] = yBeg;
+    pos[2].pos[0] = xEnd, pos[2].pos[1] = yEnd;
+    pos[3].pos[0] = xBeg, pos[3].pos[1] = yEnd;
+    pos[0].t0.u = uTL, pos[0].t0.v = vTL;
+    pos[1].t0.u = uTR, pos[1].t0.v = vTR;
+    pos[2].t0.u = uBR, pos[2].t0.v = vBR;
+    pos[3].t0.u = uBL, pos[3].t0.v = vBL;
+
+    std::uint32_t textureId = GetOrCreateTextureResourceId(pars.mip._texture);
+    PushScreenQuad(pos, textureId);
+}
+
+void EngineVK::DrawPoly(const MipInfo& mip, const Vertex2DAbs* vertices, int n, const Rect2DAbs& clipRect,
+                        int specFlags)
+{
+    if (!_device)
+    {
+        return;
+    }
+
+    const int maxN = 32;
+
+    ClipFlags orClip = 0;
+    ClipFlags andClip = ClipAll;
+    ClipFlags clipV[maxN];
+    for (int i = 0; i < n; i++)
+    {
+        const Vertex2DAbs& vs = vertices[i];
+        float x = vs.x;
+        float y = vs.y;
+        ClipFlags clip = 0;
+        if (x < clipRect.x)
+        {
+            clip |= ClipLeft;
+        }
+        else if (x > clipRect.x + clipRect.w)
+        {
+            clip |= ClipRight;
+        }
+        if (y < clipRect.y)
+        {
+            clip |= ClipTop;
+        }
+        else if (y > clipRect.y + clipRect.h)
+        {
+            clip |= ClipBottom;
+        }
+        clipV[i] = clip;
+        orClip |= clip;
+        andClip &= clip;
+    }
+    if (andClip)
+    {
+        return;
+    }
+    Vertex2DAbs clippedVertices1[maxN];
+    Vertex2DAbs clippedVertices2[maxN];
+    if (orClip)
+    {
+        Vertex2DAbs* free = clippedVertices1;
+        Vertex2DAbs* used = clippedVertices2;
+        for (int i = 0; i < n; i++)
+        {
+            used[i] = vertices[i];
+        }
+        if (orClip & ClipTop)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideTopAbs);
+            std::swap(free, used);
+        }
+        if (orClip & ClipBottom)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideBottomAbs);
+            std::swap(free, used);
+        }
+        if (orClip & ClipLeft)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideLeftAbs);
+            std::swap(free, used);
+        }
+        if (orClip & ClipRight)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideRightAbs);
+            std::swap(free, used);
+        }
+        if (n < 3)
+        {
+            return;
+        }
+        vertices = used;
+    }
+
+    if (n > maxN)
+    {
+        n = maxN;
+        Fail("Poly: Too much vertices");
+    }
+
+    TLVertex gv[maxN];
+    for (int i = 0; i < n; i++)
+    {
+        TLVertex* v = &gv[i];
+        const Vertex2DAbs& vs = vertices[i];
+        v->pos[0] = vs.x;
+        v->pos[1] = vs.y;
+        v->pos[2] = vs.z;
+        v->rhw = vs.w;
+        v->color = vs.color;
+        v->specular = PackedColor(0xff000000);
+        v->t0.u = vs.u;
+        v->t0.v = vs.v;
+    }
+
+    std::uint32_t textureId = GetOrCreateTextureResourceId(mip._texture);
+    
+    std::size_t baseIndex = _screenVertices.size();
+    for (int i = 0; i < n; i++)
+    {
+        _screenVertices.push_back(gv[i]);
+    }
+
+    std::uint32_t indexCount = 0;
+    for (int i = 1; i < n - 1; ++i)
+    {
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 0));
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + i));
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + i + 1));
+        indexCount += 3;
+    }
+
+    if (!_screenBatches.empty() && _screenBatches.back().textureId == textureId)
+    {
+        _screenBatches.back().indexCount += indexCount;
+    }
+    else
+    {
+        ScreenBatchVK batch;
+        batch.textureId = textureId;
+        batch.indexCount = indexCount;
+        _screenBatches.push_back(batch);
+    }
+}
+
+void EngineVK::DrawPoly(const MipInfo& mip, const Vertex2DPixel* vertices, int n, const Rect2DPixel& clipRect,
+                        int specFlags)
+{
+    if (!_device)
+    {
+        return;
+    }
+
+    const int maxN = 32;
+
+    ClipFlags orClip = 0;
+    ClipFlags andClip = ClipAll;
+    ClipFlags clipV[maxN];
+    for (int i = 0; i < n; i++)
+    {
+        const Vertex2DPixel& vs = vertices[i];
+        float x = vs.x;
+        float y = vs.y;
+        ClipFlags clip = 0;
+        if (x < clipRect.x)
+        {
+            clip |= ClipLeft;
+        }
+        else if (x > clipRect.x + clipRect.w)
+        {
+            clip |= ClipRight;
+        }
+        if (y < clipRect.y)
+        {
+            clip |= ClipTop;
+        }
+        else if (y > clipRect.y + clipRect.h)
+        {
+            clip |= ClipBottom;
+        }
+        clipV[i] = clip;
+        orClip |= clip;
+        andClip &= clip;
+    }
+    if (andClip)
+    {
+        return;
+    }
+    Vertex2DPixel clippedVertices1[maxN];
+    Vertex2DPixel clippedVertices2[maxN];
+    if (orClip)
+    {
+        Vertex2DPixel* free = clippedVertices1;
+        Vertex2DPixel* used = clippedVertices2;
+        for (int i = 0; i < n; i++)
+        {
+            used[i] = vertices[i];
+        }
+        if (orClip & ClipTop)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideTopPixel);
+            std::swap(free, used);
+        }
+        if (orClip & ClipBottom)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideBottomPixel);
+            std::swap(free, used);
+        }
+        if (orClip & ClipLeft)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideLeftPixel);
+            std::swap(free, used);
+        }
+        if (orClip & ClipRight)
+        {
+            n = Clip2D(clipRect, free, used, n, InsideRightPixel);
+            std::swap(free, used);
+        }
+        if (n < 3)
+        {
+            return;
+        }
+        vertices = used;
+    }
+
+    if (n > maxN)
+    {
+        n = maxN;
+        Fail("Poly: Too much vertices");
+    }
+
+    TLVertex gv[maxN];
+    float x2d = Left2D();
+    float y2d = Top2D();
+
+    for (int i = 0; i < n; i++)
+    {
+        TLVertex* v = &gv[i];
+        const Vertex2DPixel& vs = vertices[i];
+        v->pos[0] = vs.x + x2d;
+        v->pos[1] = vs.y + y2d;
+        v->pos[2] = vs.z;
+        v->rhw = vs.w;
+        v->color = vs.color;
+        v->specular = PackedColor(0xff000000);
+        v->t0.u = vs.u;
+        v->t0.v = vs.v;
+    }
+
+    std::uint32_t textureId = GetOrCreateTextureResourceId(mip._texture);
+    
+    std::size_t baseIndex = _screenVertices.size();
+    for (int i = 0; i < n; i++)
+    {
+        _screenVertices.push_back(gv[i]);
+    }
+
+    std::uint32_t indexCount = 0;
+    for (int i = 1; i < n - 1; ++i)
+    {
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 0));
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + i));
+        _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + i + 1));
+        indexCount += 3;
+    }
+
+    if (!_screenBatches.empty() && _screenBatches.back().textureId == textureId)
+    {
+        _screenBatches.back().indexCount += indexCount;
+    }
+    else
+    {
+        ScreenBatchVK batch;
+        batch.textureId = textureId;
+        batch.indexCount = indexCount;
+        _screenBatches.push_back(batch);
+    }
+}
+
+void EngineVK::DrawLine(const Line2DAbs& line, PackedColor c0, PackedColor c1, const Rect2DAbs& clip)
+{
+    float x0 = line.beg.x;
+    float y0 = line.beg.y;
+    float x1 = line.end.x;
+    float y1 = line.end.y;
+    
+    Texture* tex = GPreloadedTextures.New(TextureLine);
+    const MipInfo& mip = TextBank()->UseMipmap(tex, 1, 1);
+
+    int specFlags = NoZBuf | IsAlpha | ClampU | ClampV | IsAlphaFog;
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float dSize2 = dx * dx + dy * dy;
+    float invDSize = dSize2 > 0 ? InvSqrt(dSize2) : 1;
+
+    float pdx = +dy * invDSize, pdy = -dx * invDSize;
+    float w = 3.0f;
+    x0 -= pdx * (w * 0.5f);
+    x1 -= pdx * (w * 0.5f);
+    y0 -= pdy * (w * 0.5f);
+    y1 -= pdy * (w * 0.5f);
+    float x0Side = x0 + pdx * w, y0Side = y0 + pdy * w;
+    float x1Side = x1 + pdx * w, y1Side = y1 + pdy * w;
+
+    Vertex2DAbs vertices[4];
+    float off = 0.0f;
+    vertices[0].x = x0 - off;
+    vertices[0].y = y0 - off;
+    vertices[0].u = 0.0f;
+    vertices[0].v = 0.25f;
+    vertices[0].color = c0;
+
+    vertices[1].x = x0Side - off;
+    vertices[1].y = y0Side - off;
+    vertices[1].u = 0.0f;
+    vertices[1].v = 1.0f;
+    vertices[1].color = c0;
+
+    vertices[3].x = x1 - off;
+    vertices[3].y = y1 - off;
+    vertices[3].u = 0.1f;
+    vertices[3].v = 0.25f;
+    vertices[3].color = c1;
+
+    vertices[2].x = x1Side - off;
+    vertices[2].y = y1Side - off;
+    vertices[2].u = 0.1f;
+    vertices[2].v = 1.0f;
+    vertices[2].color = c1;
+
+    DrawPoly(mip, vertices, 4, clip, specFlags);
+}
+
+void EngineVK::PushScreenQuad(const TLVertex* quad, std::uint32_t textureId)
+{
+    std::size_t baseIndex = _screenVertices.size();
+
+    for (int i = 0; i < 4; ++i)
+    {
+        _screenVertices.push_back(quad[i]);
+    }
+
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 0));
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 1));
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 2));
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 0));
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 2));
+    _screenIndices.push_back(static_cast<std::uint16_t>(baseIndex + 3));
+
+    const std::uint32_t indexCount = 6;
+    if (!_screenBatches.empty() && _screenBatches.back().textureId == textureId)
+    {
+        _screenBatches.back().indexCount += indexCount;
+    }
+    else
+    {
+        ScreenBatchVK batch;
+        batch.textureId = textureId;
+        batch.indexCount = indexCount;
+        _screenBatches.push_back(batch);
+    }
+}
+
+void EngineVK::RecordScreenDraws(VkCommandBuffer commandBuffer)
+{
+    if (_screenVertices.empty() || _screenIndices.empty())
+        return;
+
+    if (!EnsureScreenVertexBufferCapacity(_screenVertices.size(), _screenIndices.size()))
+        return;
+
+    vk::UploadMappedBuffer(_screenVertexBuffer, _screenVertices.data(), _screenVertices.size() * sizeof(TLVertex));
+    vk::UploadMappedBuffer(_screenIndexBuffer, _screenIndices.data(), _screenIndices.size() * sizeof(std::uint16_t));
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _screenPipeline);
+
+    VkBuffer vertexBuffers[] = {_screenVertexBuffer.buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(commandBuffer, _screenIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+
+    vk::ScreenPushConstantsVK constants = vk::BuildScreenPushConstants(_width, _height);
+    vkCmdPushConstants(commandBuffer, _screenPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       vk::kScreenPushConstantsSize, &constants);
+
+    std::uint32_t indexOffset = 0;
+    VkDescriptorSet lastBoundTexDescriptorSet = VK_NULL_HANDLE;
+
+    for (const ScreenBatchVK& batch : _screenBatches)
+    {
+        if (batch.indexCount == 0)
+            continue;
+
+        VkDescriptorSet texDescriptorSet = VK_NULL_HANDLE;
+        if (batch.textureId != 0)
+        {
+            TextureVK* tex = ResolveTexture(batch.textureId);
+            if (tex)
+                texDescriptorSet = tex->GetDescriptorSet();
+        }
+        if (texDescriptorSet == VK_NULL_HANDLE && _fallbackWhiteTexture)
+        {
+            texDescriptorSet = _fallbackWhiteTexture->GetDescriptorSet();
+        }
+
+        if (texDescriptorSet != VK_NULL_HANDLE && texDescriptorSet != lastBoundTexDescriptorSet)
+        {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _screenPipelineLayout, 0, 1,
+                                    &texDescriptorSet, 0, nullptr);
+            lastBoundTexDescriptorSet = texDescriptorSet;
+        }
+
+        vkCmdDrawIndexed(commandBuffer, batch.indexCount, 1, indexOffset, 0, 0);
+        indexOffset += batch.indexCount;
+    }
 }
 
 } // namespace Poseidon
