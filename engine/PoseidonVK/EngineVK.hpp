@@ -45,6 +45,10 @@ class EngineVK : public EngineDummy
     void InitDraw(bool clear = false, PackedColor color = PackedColor(0)) override;
     VertexBuffer* CreateVertexBuffer(const Shape& src, VBType type) override;
     void DrawSectionTL(const Shape& sMesh, int beg, int end) override;
+    bool GetTL() const override { return true; }
+    bool GetTLOnSurface() const override { return true; }
+    void BeginMeshTL(const Shape& sMesh, int spec, bool dynamic = false) override;
+    void EndMeshTL(const Shape& sMesh) override;
     const std::vector<DrawItem>* GetRecordedDraws() const override { return &_drawItems; }
     void PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec& spec) override;
     void PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorld, const render::LegacySpec& spec) override;

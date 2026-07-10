@@ -22,14 +22,18 @@ inline VkCullModeFlags ToVkCullMode(render::CullMode mode) noexcept
 
 inline VkFrontFace ToVkFrontFace(render::FrontFaceMode mode) noexcept
 {
+    // The scene pipeline uses a negative viewport height to flip Y (so the
+    // engine's OpenGL-convention projection matrices work in Vulkan).  That
+    // flip inverts triangle winding order as seen by the rasterizer, so we
+    // invert the front-face sense here to keep back-face culling correct.
     switch (mode)
     {
         case render::FrontFaceMode::CW:
-            return VK_FRONT_FACE_CLOCKWISE;
-        case render::FrontFaceMode::CCW:
             return VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        case render::FrontFaceMode::CCW:
+            return VK_FRONT_FACE_CLOCKWISE;
     }
-    return VK_FRONT_FACE_CLOCKWISE;
+    return VK_FRONT_FACE_COUNTER_CLOCKWISE;
 }
 
 inline VkPipelineRasterizationStateCreateInfo BuildRasterizationState(

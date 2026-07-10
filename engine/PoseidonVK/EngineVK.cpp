@@ -1705,9 +1705,13 @@ bool EngineVK::CreateScenePipeline()
 
     VkViewport viewport{};
     viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(_swapchainExtent.width);
-    viewport.height = static_cast<float>(_swapchainExtent.height);
+    // Flip Y so OpenGL-convention projection matrices render right-side-up.
+    // Vulkan clip-space Y points downward; by using a negative height we make
+    // it point upward, matching the engine's expectations.  This requires
+    // Vulkan 1.1 / VK_KHR_maintenance1 (already our minimum).
+    viewport.y      = static_cast<float>(_swapchainExtent.height);
+    viewport.width  = static_cast<float>(_swapchainExtent.width);
+    viewport.height = -static_cast<float>(_swapchainExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
 
@@ -2824,6 +2828,22 @@ void EngineVK::DrawSectionTL(const Shape& sMesh, int beg, int end)
     item.backendTexture1ResourceId = _lastTexture1ResourceId;
     item.passId = SpecToPassId(item.specFlags);
     _drawItems.push_back(item);
+}
+
+void EngineVK::BeginMeshTL(const Shape& sMesh, int /*spec*/, bool dynamic)
+{
+    // Mirror GL33's BeginMeshTL: if the vertex buffer is marked dirty or the
+    // shape is dynamic, re-upload the CPU-side vertex data so the GPU buffer
+    // reflects any per-frame animation. For static meshes this is a no-op.
+    if (sMesh.GetVertexBuffer())
+        sMesh.GetVertexBuffer()->Update(sMesh, dynamic);
+}
+
+void EngineVK::EndMeshTL(const Shape& /*sMesh*/)
+{
+    // No-op for Vulkan. GL33 uses EndMeshTL to ClearLights() because it binds
+    // per-draw light state as GL uniforms; Vulkan light state is uploaded once
+    // per frame into the frame-constants UBO and requires no per-mesh teardown.
 }
 
 void EngineVK::PrepareTriangleTL(const MipInfo& mip, const Poseidon::render::LegacySpec& spec)

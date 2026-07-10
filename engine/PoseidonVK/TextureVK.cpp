@@ -29,6 +29,22 @@ struct FormatInfo
     bool compressed;
 };
 
+// DstFormatVK: maps a texture's source (file) format to the in-memory
+// decode target that TextureVK will upload to Vulkan.
+// Mirrors TextureGL33_Init::DstFormat() but without GL-specific hardware
+// capability checks — Vulkan natively supports all 16-bit, 32-bit, and
+// DXT formats, so only the P8 palette-expand requires a conversion.
+static PacFormat DstFormatVK(PacFormat srcFormat)
+{
+    switch (srcFormat)
+    {
+        case PacP8:
+            return PacARGB1555; // palette-expand: 8-bit indexed → 16-bit ARGB1555
+        default:
+            return srcFormat;   // identity for ARGB1555/4444/8888, RGB565, AI88, DXT*
+    }
+}
+
 FormatInfo PacFormatToVk(PacFormat fmt)
 {
     switch (fmt)
@@ -41,6 +57,7 @@ FormatInfo PacFormatToVk(PacFormat fmt)
         case PacARGB8888: return {VK_FORMAT_B8G8R8A8_UNORM, false};
         case PacRGB565: return {VK_FORMAT_R5G6B5_UNORM_PACK16, false};
         case PacARGB4444: return {VK_FORMAT_B4G4R4A4_UNORM_PACK16, false};
+        case PacAI88: return {VK_FORMAT_R8G8_UNORM, false};
         case PacARGB1555: // fallthrough
         default: return {VK_FORMAT_B5G5R5A1_UNORM_PACK16, false};
     }
@@ -62,6 +79,12 @@ TextureVK::~TextureVK()
     _engine.UnregisterTexture(this);
 
     VkDevice dev = _engine._device;
+    // Block until the GPU finishes any commands that reference this texture
+    // before we free the descriptor set, sampler, or image.  Texture
+    // destruction happens at mission load/unload boundaries, so a full idle
+    // stall is acceptable here.
+    if (dev)
+        vkDeviceWaitIdle(dev);
     if (dev && _descriptorSet && _engine._textureDescriptorPool)
     {
         vkFreeDescriptorSets(dev, _engine._textureDescriptorPool, 1, &_descriptorSet);
@@ -111,9 +134,21 @@ bool TextureVK::Init(RStringB name)
     _w = _mipmaps[0]._w;
     _h = _mipmaps[0]._h;
 
-    const PacFormat srcFmt = _src->GetFormat();
-    const FormatInfo fi = PacFormatToVk(srcFmt);
+    // Compute the decode-target format from the source format, then initialise
+    // _dFormat on every mip.  This mirrors TextureGL33_Init.cpp lines 233-246:
+    //   dFormat = DstFormat(srcFmt, dxt);
+    //   for each mip: mip.SetDestFormat(dFormat, 8);
+    // SetDestFormat MUST be called during Init — not only during the upload
+    // loop — because DstFormat() returns the raw _dFormat member with NO
+    // fallback.  Without this step _dFormat stays 0, SetDestFormat(0) later
+    // would hit the default Fail path, and LoadPaaBin16 would assert
+    // '_sFormat == _dFormat'.
+    const PacFormat uploadFmt = DstFormatVK(_src->GetFormat());
+    const FormatInfo fi = PacFormatToVk(uploadFmt);
     const uint32_t levels = static_cast<uint32_t>(_nMipmaps);
+
+    for (int i = 0; i < _nMipmaps; ++i)
+        _mipmaps[i].SetDestFormat(uploadFmt, 8);
 
     // Create device-local image + view
     VkResult r = vk::CreateImage2D(
@@ -202,12 +237,20 @@ bool TextureVK::UploadMips()
     if (!_src || !_image.image)
         return false;
 
-    const PacFormat srcFmt = _src->GetFormat();
+    // _dFormat was populated on every mip during Init via SetDestFormat.
+    // DstFormat() is now valid (non-zero) — same pattern as GL33_Loading.cpp.
+    const PacFormat sharedFmt = _mipmaps[0].DstFormat();
 
     for (int i = 0; i < _nMipmaps; ++i)
     {
-        const PacLevelMem& mip = _mipmaps[i];
-        const auto layout = render::mipmap::ComputeLayout(srcFmt, mip._w, mip._h);
+        const PacLevelMem& srcMip = _mipmaps[i];
+        PacLevelMem mip = srcMip;
+        // Mirror GL33_Loading.cpp:102 — only override if this mip diverges
+        // from the shared format (rare mixed-format PAAs).
+        if (mip.DstFormat() != sharedFmt)
+            mip.SetDestFormat(sharedFmt, 8);
+
+        const auto layout = render::mipmap::ComputeLayout(sharedFmt, srcMip._w, srcMip._h);
         const std::size_t dataSize = static_cast<std::size_t>(layout.dataSize);
         if (dataSize == 0)
             continue;
@@ -222,11 +265,10 @@ bool TextureVK::UploadMips()
         if (r != VK_SUCCESS)
             continue;
 
-        // Decode mip into staging buffer
-        PacLevelMem mipCopy = mip;
-        mipCopy.SetDestFormat(srcFmt, 8);
+        // Decode the mip into the staging buffer; _dFormat is already correctly
+        // set on mipCopy so LoadPaaBin16's '_sFormat == _dFormat' assertion passes.
         std::vector<char> pixelData(dataSize);
-        int ok = _src->GetMipmapData(pixelData.data(), mipCopy, i);
+        int ok = _src->GetMipmapData(pixelData.data(), mip, i);
         if (!ok)
             std::memset(pixelData.data(), 0, dataSize);
 

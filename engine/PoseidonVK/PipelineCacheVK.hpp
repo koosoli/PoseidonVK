@@ -98,6 +98,49 @@ public:
         _inputAssembly = inputAssembly;
         _viewportState = viewportState;
         _multisampling = multisampling;
+
+        // Make deep copies of pointers pointing to temporary stack variables
+        if (vertexInput.pVertexBindingDescriptions && vertexInput.vertexBindingDescriptionCount > 0)
+        {
+            _bindingDescs.assign(vertexInput.pVertexBindingDescriptions,
+                                 vertexInput.pVertexBindingDescriptions + vertexInput.vertexBindingDescriptionCount);
+            _vertexInput.pVertexBindingDescriptions = _bindingDescs.data();
+        }
+        else
+        {
+            _vertexInput.pVertexBindingDescriptions = nullptr;
+        }
+
+        if (vertexInput.pVertexAttributeDescriptions && vertexInput.vertexAttributeDescriptionCount > 0)
+        {
+            _attributeDescs.assign(vertexInput.pVertexAttributeDescriptions,
+                                   vertexInput.pVertexAttributeDescriptions + vertexInput.vertexAttributeDescriptionCount);
+            _vertexInput.pVertexAttributeDescriptions = _attributeDescs.data();
+        }
+        else
+        {
+            _vertexInput.pVertexAttributeDescriptions = nullptr;
+        }
+
+        if (viewportState.pViewports && viewportState.viewportCount > 0)
+        {
+            _viewports.assign(viewportState.pViewports, viewportState.pViewports + viewportState.viewportCount);
+            _viewportState.pViewports = _viewports.data();
+        }
+        else
+        {
+            _viewportState.pViewports = nullptr;
+        }
+
+        if (viewportState.pScissors && viewportState.scissorCount > 0)
+        {
+            _scissors.assign(viewportState.pScissors, viewportState.pScissors + viewportState.scissorCount);
+            _viewportState.pScissors = _scissors.data();
+        }
+        else
+        {
+            _viewportState.pScissors = nullptr;
+        }
     }
 
     // Returns (or creates) the VkPipeline for the given state key.
@@ -176,16 +219,21 @@ private:
         return pipeline;
     }
 
-    VkDevice        _device        = VK_NULL_HANDLE;
-    VkRenderPass    _renderPass    = VK_NULL_HANDLE;
+    VkDevice         _device        = VK_NULL_HANDLE;
+    VkRenderPass     _renderPass    = VK_NULL_HANDLE;
     VkPipelineLayout _layout       = VK_NULL_HANDLE;
-    VkShaderModule  _vertModule    = VK_NULL_HANDLE;
-    VkShaderModule  _fragModule    = VK_NULL_HANDLE;
+    VkShaderModule   _vertModule    = VK_NULL_HANDLE;
+    VkShaderModule   _fragModule    = VK_NULL_HANDLE;
 
     VkPipelineVertexInputStateCreateInfo   _vertexInput{};
     VkPipelineInputAssemblyStateCreateInfo _inputAssembly{};
     VkPipelineViewportStateCreateInfo      _viewportState{};
     VkPipelineMultisampleStateCreateInfo   _multisampling{};
+
+    std::vector<VkVertexInputBindingDescription>   _bindingDescs;
+    std::vector<VkVertexInputAttributeDescription> _attributeDescs;
+    std::vector<VkViewport>                        _viewports;
+    std::vector<VkRect2D>                          _scissors;
 
     std::unordered_map<PipelineKeyVK, VkPipeline, PipelineKeyHash> _cache;
 };
