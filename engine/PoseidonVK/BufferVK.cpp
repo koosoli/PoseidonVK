@@ -202,8 +202,18 @@ VkResult CreateImage2D(VkPhysicalDevice physicalDevice, VkDevice device,
     vi.image = out.image;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vi.format = format;
-    vi.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-                     VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    if (format == VK_FORMAT_R8G8_UNORM)
+    {
+        vi.components.r = VK_COMPONENT_SWIZZLE_R;
+        vi.components.g = VK_COMPONENT_SWIZZLE_R;
+        vi.components.b = VK_COMPONENT_SWIZZLE_R;
+        vi.components.a = VK_COMPONENT_SWIZZLE_G;
+    }
+    else
+    {
+        vi.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                         VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    }
     vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vi.subresourceRange.baseMipLevel = 0;
     vi.subresourceRange.levelCount = mipLevels;

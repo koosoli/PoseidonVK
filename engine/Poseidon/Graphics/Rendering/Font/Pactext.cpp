@@ -1165,6 +1165,49 @@ int PacLevelMem::LoadPac(QIStream& in, void* mem, const PacPalette* pal) const
         case PacDXT5:
             ret = LoadPaaDXT(in, mem, pal);
             break;
+        case PacAI88:
+        case PacARGB1555:
+        case PacARGB4444:
+            LOG_DEBUG(Graphics, "LoadPac: loading LZW binary format {} for .pac", (int)ENUM_CAST(PacFormat, _sFormat));
+            // These formats use the same LZW-compressed 16-bit binary layout
+            // in both .pac and .paa files.  Route through LoadPaaBin16 exactly
+            // as LoadPaa() does for these source formats.
+            ret = LoadPaaBin16(in, mem, pal);
+            break;
+        case PacARGB8888:
+        {
+            long w = fgetiw(in);
+            long h = fgetiw(in);
+            if (w == 0 && h == 0)
+            {
+                ret = 1; // mipmap terminator
+                break;
+            }
+            long dSize = fgeti24(in);
+            PoseidonAssert(_w == w);
+            PoseidonAssert(_h == h);
+            if (_dFormat == PacARGB8888)
+            {
+                in.read(static_cast<char*>(mem), dSize);
+                ret = in.fail() ? -1 : 0;
+            }
+            else
+            {
+                std::vector<char> tmp(dSize);
+                in.read(tmp.data(), dSize);
+                if (in.fail())
+                {
+                    ret = -1;
+                    break;
+                }
+                int srcPitch = _w * 4;
+                char* dst = static_cast<char*>(mem);
+                for (int y = 0; y < _h; y++)
+                    memcpy(dst + y * _pitch, tmp.data() + y * srcPitch, srcPitch);
+                ret = 0;
+            }
+            break;
+        }
         case PacP8:
             switch (ENUM_CAST(PacFormat, _dFormat))
             {
@@ -1187,6 +1230,7 @@ int PacLevelMem::LoadPac(QIStream& in, void* mem, const PacPalette* pal) const
     }
     return ret;
 }
+
 int PacLevelMem::LoadPaa(QIStream& in, void* mem, const PacPalette* pal) const
 {
     int ret = -1;
