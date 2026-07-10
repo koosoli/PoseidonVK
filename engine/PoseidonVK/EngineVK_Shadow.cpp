@@ -500,7 +500,7 @@ bool EngineVK::CreateShadowDepthPipeline()
     rs.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rs.polygonMode = VK_POLYGON_MODE_FILL;
     rs.cullMode    = VK_CULL_MODE_FRONT_BIT; // front-face culling reduces shadow acne
-    rs.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.frontFace   = VK_FRONT_FACE_CLOCKWISE; // flipped due to negative viewport height
     rs.lineWidth   = 1.0f;
 
     VkPipelineDepthStencilStateCreateInfo ds{};
@@ -813,9 +813,9 @@ void EngineVK::RenderShadowDepthScene(
 
         VkViewport vkVP{};
         vkVP.x        = 0.0f;
-        vkVP.y        = 0.0f;
+        vkVP.y        = static_cast<float>(res);
         vkVP.width    = static_cast<float>(res);
-        vkVP.height   = static_cast<float>(res);
+        vkVP.height   = -static_cast<float>(res);
         vkVP.minDepth = 0.0f;
         vkVP.maxDepth = 1.0f;
         vkCmdSetViewport(cb, 0, 1, &vkVP);
