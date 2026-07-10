@@ -2155,13 +2155,11 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
     renderPassInfo.pClearValues = clearValues;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    if (_bootstrapPipeline)
+    if (_bootstrapPipeline && !_hasFrameConstants)
     {
         const vk::BootstrapPushConstantsVK constants =
-            _hasFrameConstants
-                ? vk::BuildBootstrapPushConstants(_lastFrameConstants, _clearColor.float32)
-                : vk::BuildBootstrapPushConstants(static_cast<int>(_swapchainExtent.width),
-                                                  static_cast<int>(_swapchainExtent.height), _clearColor.float32);
+            vk::BuildBootstrapPushConstants(static_cast<int>(_swapchainExtent.width),
+                                            static_cast<int>(_swapchainExtent.height), _clearColor.float32);
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _bootstrapPipeline);
         if (_bootstrapVertexBuffer.buffer)
