@@ -6,9 +6,10 @@ layout(location = 2) in vec2 inTexcoord;
 
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vWorldNormal;
-layout(location = 2) out vec2 vTexcoord;
-layout(location = 3) out float vFogFactor;
-layout(location = 4) flat out uint vDrawIndex;
+layout(location = 2) out vec2 vTexcoord0;
+layout(location = 3) out vec2 vTexcoord1;
+layout(location = 4) out float vFogFactor;
+layout(location = 5) flat out uint vDrawIndex;
 
 layout(set = 0, binding = 0, std140) uniform FrameConstants
 {
@@ -27,6 +28,7 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 localLightAmbient[8];
     vec4 localLightDirection[8];
     vec4 grassParams;
+    vec4 time;
 } frame;
 
 // Per-draw constants uploaded by the host from the backend-neutral frame plan.
@@ -70,6 +72,12 @@ layout(push_constant) uniform SceneDraw
     uint drawIndex;
 } draw;
 
+const uint kTexGenNone   = 0u;
+const uint kTexGenFixed  = 1u;
+const uint kTexGenWater  = 2u;
+const uint kTexGenDetail = 3u;
+const uint kTexGenGrass  = 4u;
+
 void main()
 {
     bool hasDrawConstants = draw.useDrawConstants != 0u && drawConstants.draws.length() > 0u;
@@ -87,8 +95,28 @@ void main()
 
     vWorldPos = worldPos.xyz;
     vWorldNormal = worldNormal;
-    vTexcoord = inTexcoord;
     vDrawIndex = drawIndex;
+
+    // Apply UV scaling and animation based on texGen
+    uint texGen = hasDrawConstants ? drawConstants.draws[drawIndex].texGen : kTexGenNone;
+    if (texGen == kTexGenDetail || texGen == kTexGenGrass)
+    {
+        vTexcoord0 = inTexcoord;
+        vTexcoord1 = inTexcoord * 32.0;
+    }
+    else if (texGen == kTexGenWater)
+    {
+        float t = frame.time.x;
+        float mw1 = sin(t * 0.04);
+        float mw2 = mod(t * 0.3 + sin(t * 0.5) * 0.5, 2.0);
+        vTexcoord0 = inTexcoord + vec2(mw1 * 0.5, mw1);
+        vTexcoord1 = inTexcoord * 64.0 + vec2(mw2 * 0.5, mw2);
+    }
+    else
+    {
+        vTexcoord0 = inTexcoord;
+        vTexcoord1 = inTexcoord;
+    }
 
     // Fog factor computed vertex-side from the uploaded frame constants, mirroring
     // the GL33 vsTransform convention: distance is camera-relative (view-space

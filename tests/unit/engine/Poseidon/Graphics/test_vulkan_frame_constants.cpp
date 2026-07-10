@@ -87,7 +87,9 @@ TEST_CASE("Vulkan frame constants match std140 descriptor layout", "[vulkan][fra
     STATIC_REQUIRE(offsetof(FrameConstantsVK, localLightDiffuse) == 432);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, localLightAmbient) == 560);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, localLightDirection) == 688);
-    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 816);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, grassParams) == 816);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, time) == 832);
+    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 848);
 }
 
 TEST_CASE("Vulkan mapped buffer upload copies frame constants bytes", "[vulkan][frame-constants]")

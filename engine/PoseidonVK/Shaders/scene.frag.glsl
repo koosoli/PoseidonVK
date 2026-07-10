@@ -2,9 +2,10 @@
 
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vWorldNormal;
-layout(location = 2) in vec2 vTexcoord;
-layout(location = 3) in float vFogFactor;
-layout(location = 4) flat in uint vDrawIndex;
+layout(location = 2) in vec2 vTexcoord0;
+layout(location = 3) in vec2 vTexcoord1;
+layout(location = 4) in float vFogFactor;
+layout(location = 5) flat in uint vDrawIndex;
 
 layout(location = 0) out vec4 outColor;
 
@@ -25,6 +26,7 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 localLightAmbient[8];
     vec4 localLightDirection[8];
     vec4 grassParams;
+    vec4 time;
 } frame;
 
 struct DrawConstants
@@ -144,8 +146,8 @@ void main()
     // -----------------------------------------------------------------------
     // Texture samples
     // -----------------------------------------------------------------------
-    vec4 c0 = texture(tex0, vTexcoord);
-    vec4 c1 = texture(tex1, vTexcoord);
+    vec4 c0 = texture(tex0, vTexcoord0);
+    vec4 c1 = texture(tex1, vTexcoord1);
 
     // -----------------------------------------------------------------------
     // Alpha test on c0 (all families)

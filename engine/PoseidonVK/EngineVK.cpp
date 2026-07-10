@@ -10,6 +10,7 @@
 #include <Poseidon/Graphics/Rendering/Primitives/Clip2D.hpp>
 #include <Poseidon/Graphics/Textures/TexturePreload.hpp>
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
+#include <Poseidon/Core/Global.hpp>
 #include <unordered_map>
 #include <PoseidonVK/BufferVK.hpp>
 #include <PoseidonVK/DescriptorBindingsVK.hpp>
@@ -512,6 +513,7 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     _lastFrameConstants.grassParams[1] = _grassParam[1];
     _lastFrameConstants.grassParams[2] = _grassParam[2];
     _lastFrameConstants.grassParams[3] = _grassParam[3];
+    _lastFrameConstants.time[0] = Glob.time.toFloat();
 
     _lastDrawConstants = vk::BuildDrawConstants(frame);
     _lastSceneDrawCommands = vk::BuildSceneDrawCommands(_lastDrawConstants);
@@ -1495,6 +1497,11 @@ void EngineVK::DestroyDepthResources()
 
 bool EngineVK::CreateBootstrapPipeline()
 {
+    if (_device && _bootstrapPipeline)
+    {
+        vkDestroyPipeline(_device, _bootstrapPipeline, nullptr);
+        _bootstrapPipeline = VK_NULL_HANDLE;
+    }
     std::vector<uint32_t> vertexSpirv;
     std::vector<uint32_t> fragmentSpirv;
     std::string error;
@@ -1645,6 +1652,24 @@ bool EngineVK::CreateBootstrapPipeline()
 
 bool EngineVK::CreateScenePipeline()
 {
+    if (_device)
+    {
+        if (_scenePipeline)
+        {
+            vkDestroyPipeline(_device, _scenePipeline, nullptr);
+            _scenePipeline = VK_NULL_HANDLE;
+        }
+        if (_sceneVertexModule)
+        {
+            vkDestroyShaderModule(_device, _sceneVertexModule, nullptr);
+            _sceneVertexModule = VK_NULL_HANDLE;
+        }
+        if (_sceneFragmentModule)
+        {
+            vkDestroyShaderModule(_device, _sceneFragmentModule, nullptr);
+            _sceneFragmentModule = VK_NULL_HANDLE;
+        }
+    }
     std::vector<uint32_t> vertexSpirv;
     std::vector<uint32_t> fragmentSpirv;
     std::string error;
@@ -1848,6 +1873,24 @@ bool EngineVK::CreateScreenPipelineLayout()
 
 bool EngineVK::CreateScreenPipeline()
 {
+    if (_device)
+    {
+        if (_screenPipeline)
+        {
+            vkDestroyPipeline(_device, _screenPipeline, nullptr);
+            _screenPipeline = VK_NULL_HANDLE;
+        }
+        if (_screenVertexModule)
+        {
+            vkDestroyShaderModule(_device, _screenVertexModule, nullptr);
+            _screenVertexModule = VK_NULL_HANDLE;
+        }
+        if (_screenFragmentModule)
+        {
+            vkDestroyShaderModule(_device, _screenFragmentModule, nullptr);
+            _screenFragmentModule = VK_NULL_HANDLE;
+        }
+    }
     std::vector<uint32_t> vertexSpirv;
     std::vector<uint32_t> fragmentSpirv;
     std::string error;

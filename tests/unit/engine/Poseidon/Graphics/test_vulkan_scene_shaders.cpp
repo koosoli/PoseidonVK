@@ -156,16 +156,16 @@ TEST_CASE("Vulkan scene shaders drive fog from the uploaded frame constants", "[
     const std::string fragmentSource = ReadTextFile(shaderDir / "scene.frag.glsl");
 
     // Vertex shader computes the fog factor from fogParams and emits a varying.
-    CHECK(vertexSource.find("layout(location = 3) out float vFogFactor;") != std::string::npos);
+    CHECK(vertexSource.find("layout(location = 4) out float vFogFactor;") != std::string::npos);
     CHECK(vertexSource.find("frame.fogParams.x") != std::string::npos);
     CHECK(vertexSource.find("frame.fogParams.z") != std::string::npos);
     CHECK(vertexSource.find("frame.fogParams.w") != std::string::npos);
     CHECK(vertexSource.find("vFogFactor =") != std::string::npos);
 
     // Fragment shader consumes the varying and mixes toward frame.fogColor.
-    CHECK(fragmentSource.find("layout(location = 3) in float vFogFactor;") != std::string::npos);
+    CHECK(fragmentSource.find("layout(location = 4) in float vFogFactor;") != std::string::npos);
     CHECK(fragmentSource.find("frame.fogColor.rgb") != std::string::npos);
-    CHECK(fragmentSource.find("mix(frame.fogColor.rgb, litColor, vFogFactor)") != std::string::npos);
+    CHECK(fragmentSource.find("mix(frame.fogColor.rgb, baseColor, vFogFactor)") != std::string::npos);
 }
 
 TEST_CASE("Vulkan scene fragment shader drives sun lighting from frame constants", "[vulkan][scene-shaders]")
@@ -190,8 +190,8 @@ TEST_CASE("Vulkan scene fragment shader consumes uploaded local lights", "[vulka
     CHECK(fragmentSource.find("frame.localLightPosition[i].w * frame.localLightPosition[i].w") !=
           std::string::npos);
     CHECK(fragmentSource.find("frame.localLightDirection[i].w > 0.5") != std::string::npos);
-    CHECK(fragmentSource.find("frame.localLightDiffuse[i].rgb * localLightScale") != std::string::npos);
-    CHECK(fragmentSource.find("frame.localLightAmbient[i].rgb * localLightScale") != std::string::npos);
+    CHECK(fragmentSource.find("frame.localLightDiffuse[i].rgb  * localLightScale") != std::string::npos);
+    CHECK(fragmentSource.find("frame.localLightAmbient[i].rgb  * localLightScale") != std::string::npos);
 }
 
 TEST_CASE("Vulkan scene shaders declare the world push constant", "[vulkan][scene-shaders]")
