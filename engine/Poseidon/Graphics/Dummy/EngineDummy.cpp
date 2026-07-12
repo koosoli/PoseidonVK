@@ -230,7 +230,7 @@ void EngineDummy::DrawPolygon(TLVertexTable&, const short*, int) {}
 void EngineDummy::Draw2D(const Draw2DPars&, const Rect2DAbs&, const Rect2DAbs&) {}
 void EngineDummy::DrawLine(int beg, int end) {}
 void EngineDummy::DrawLine(const Line2DAbs&, PackedColor, PackedColor, const Rect2DAbs&) {}
-void EngineDummy::PrepareMesh(const render::LegacySpec& /*spec*/) {}
+void EngineDummy::PrepareMesh(const render::LegacySpec& /*spec*/, ClipFlags /*clipFlags*/) {}
 void EngineDummy::BeginMesh(TLVertexTable&, const render::LegacySpec& /*spec*/) {}
 void EngineDummy::EndMesh(TLVertexTable&) {}
 void EngineDummy::TextureDestroyed(Texture*) {}

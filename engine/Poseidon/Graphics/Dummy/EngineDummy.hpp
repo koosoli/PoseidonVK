@@ -94,7 +94,7 @@ class EngineDummy : public Engine
     void Draw2D(const Draw2DPars&, const Rect2DAbs&, const Rect2DAbs&) override;
     void DrawLine(int beg, int end) override;
     void DrawLine(const Line2DAbs&, PackedColor, PackedColor, const Rect2DAbs&) override;
-    void PrepareMesh(const render::LegacySpec& spec) override;
+    void PrepareMesh(const render::LegacySpec& spec, ClipFlags clipFlags) override;
     void TextureDestroyed(Texture*) override;
     float GetZCoef() const;
 

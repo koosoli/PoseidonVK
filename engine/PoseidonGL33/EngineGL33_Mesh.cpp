@@ -4,7 +4,7 @@
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/World/Scene/Camera/Camera.hpp>
 
-void EngineGL33::PrepareMesh(const Poseidon::render::LegacySpec& /*spec*/)
+void EngineGL33::PrepareMesh(const Poseidon::render::LegacySpec& /*spec*/, ClipFlags /*clipFlags*/)
 {
     BeginScreenPass();
     ChangeClipPlanes();
@@ -58,14 +58,16 @@ void EngineGL33::BeginInstancedRunUpload()
     BeginInstancedRun(_instPending);
 }
 
-void EngineGL33::PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorld, const Poseidon::render::LegacySpec& spec)
+void EngineGL33::PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorld,
+                               const Poseidon::render::LegacySpec& spec)
 {
     FlushAndFreeAllQueues(_queueNo, true);
     BeginPass(SpecToPassId(spec));
     PrepareMeshTLImpl(_frameState, modelToWorld, spec);
 }
 
-void EngineGL33::PrepareMeshTLImpl(const FrameState& frame, const Matrix4& modelToWorld, const Poseidon::render::LegacySpec& spec)
+void EngineGL33::PrepareMeshTLImpl(const FrameState& frame, const Matrix4& modelToWorld,
+                                   const Poseidon::render::LegacySpec& spec)
 {
     EnableSunLight(!Poseidon::render::Has(spec.material, Poseidon::render::Material::DisableSun));
     ChangeClipPlanes();

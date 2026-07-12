@@ -38,7 +38,7 @@ namespace frame
 {
 struct Draw;
 struct Frame;
-}
+} // namespace frame
 } // namespace render
 
 class Counter
@@ -598,7 +598,8 @@ class Engine : public IGraphicsEngine
     }
     virtual void DrawPoints(int beg, int end) {} // 3D points
 
-    void PrepareMesh(const render::LegacySpec& spec) override = 0;                    // prepare internal variables
+    void PrepareMesh(const render::LegacySpec& spec,
+                     ClipFlags clipFlags = 0) override = 0;                           // prepare internal variables
     void BeginMesh(TLVertexTable& mesh, const render::LegacySpec& spec) override = 0; // convert all mesh vertices
     void EndMesh(TLVertexTable& mesh) override = 0;                                   // forget mesh
 

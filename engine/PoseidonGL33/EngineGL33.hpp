@@ -878,7 +878,7 @@ class EngineGL33 : public Engine
     void FogColorChanged(ColorVal fogColor) override { SetFogColor(fogColor); }
     void EnableNightEye(float night) override;
 
-    void PrepareMesh(const Poseidon::render::LegacySpec& spec) override;
+    void PrepareMesh(const Poseidon::render::LegacySpec& spec, ClipFlags clipFlags) override;
     void BeginMesh(TLVertexTable& mesh, const Poseidon::render::LegacySpec& spec) override;
     void EndMesh(TLVertexTable& mesh) override;
 

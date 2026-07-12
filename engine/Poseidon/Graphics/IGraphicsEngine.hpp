@@ -97,7 +97,7 @@ class IGraphicsEngine
     virtual void DrawLine(int beg, int end) = 0;
 
     // Typed-only — see RenderFlags.hpp.
-    virtual void PrepareMesh(const render::LegacySpec& spec) = 0;
+    virtual void PrepareMesh(const render::LegacySpec& spec, ClipFlags clipFlags = 0) = 0;
     virtual void BeginMesh(TLVertexTable& mesh, const render::LegacySpec& spec) = 0;
     virtual void EndMesh(TLVertexTable& mesh) = 0;
 

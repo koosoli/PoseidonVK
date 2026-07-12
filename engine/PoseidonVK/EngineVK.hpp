@@ -7,6 +7,7 @@
 #include <PoseidonVK/PipelineCacheVK.hpp>
 #include <PoseidonVK/SceneDrawCommandsVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
+#include <PoseidonVK/ScreenDrawRoutingVK.hpp>
 #include <PoseidonVK/ScreenPushConstantsVK.hpp>
 #include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
@@ -14,11 +15,16 @@
 #include <vulkan/vulkan.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <unordered_map>
 
-namespace Poseidon { class TextBankVK; class TextureVK; }
+namespace Poseidon
+{
+class TextBankVK;
+class TextureVK;
+} // namespace Poseidon
 
 struct SDL_Window;
 
@@ -58,21 +64,21 @@ class EngineVK : public EngineDummy
     // --- 2D / HUD / text screen-space draw path ---
     // These override the EngineDummy no-ops so the menu, HUD, and text render
     // under Vulkan. Each call buffers a TLVertex quad into CPU-side vectors
-    // (cleared per frame in InitDraw); the recorded batches are emitted inside
-    // RecordBootstrapCommand after the 3D scene block.
+    // (cleared per frame in InitDraw); background compatibility batches emit
+    // before scene geometry and regular 2D batches emit afterward.
     void Draw2D(const Draw2DPars& pars, const Rect2DAbs& rect, const Rect2DAbs& clip) override;
-    void DrawPoly(const MipInfo& mip, const Vertex2DAbs* vertices, int nVertices,
-                  const Rect2DAbs& clip, int specFlags) override;
-    void DrawPoly(const MipInfo& mip, const Vertex2DPixel* vertices, int nVertices,
-                  const Rect2DPixel& clip, int specFlags) override;
+    void DrawPoly(const MipInfo& mip, const Vertex2DAbs* vertices, int nVertices, const Rect2DAbs& clip,
+                  int specFlags) override;
+    void DrawPoly(const MipInfo& mip, const Vertex2DPixel* vertices, int nVertices, const Rect2DPixel& clip,
+                  int specFlags) override;
     void DrawLine(const Line2DAbs& line, PackedColor c0, PackedColor c1, const Rect2DAbs& clip) override;
 
-    // Legacy software T&L compatibility path used by the options notebook's
-    // pre-transformed 3D controls. These emit through the screen pipeline.
+    // Legacy software T&L compatibility path. Sky/cloud clipping hints emit
+    // behind the scene; other pre-transformed geometry remains an overlay.
     void PrepareTriangle(const MipInfo& mip, int specFlags) override;
     void DrawPolygon(const VertexIndex* indices, int nVertices) override;
     void DrawSection(const FaceArray& faces, Offset begin, Offset end) override;
-    void PrepareMesh(const render::LegacySpec& spec) override;
+    void PrepareMesh(const render::LegacySpec& spec, ClipFlags clipFlags) override;
     void BeginMesh(TLVertexTable& mesh, const render::LegacySpec& spec) override;
     void EndMesh(TLVertexTable& mesh) override;
 
@@ -96,7 +102,8 @@ class EngineVK : public EngineDummy
     ShadowMapTuning GetShadowMapTuning() const override;
     void SetShadowMapTuning(const ShadowMapTuning& tuning) override;
     void SetShadowMapSunFactor(float f) override;
-    void RenderShadowDepthScene(const float* lightVPs, const float* splitViewDist, const float* camFwd3, int numCascades, int omniCount, int res, const ShadowCasterSet& casters) override;
+    void RenderShadowDepthScene(const float* lightVPs, const float* splitViewDist, const float* camFwd3,
+                                int numCascades, int omniCount, int res, const ShadowCasterSet& casters) override;
     bool DumpShadowMap(const char* path) override;
     bool ShadowMapCacheSelfTest() override;
 
@@ -131,7 +138,8 @@ class EngineVK : public EngineDummy
     void DestroyScreenPipelineLayout();
     void DestroyScreenDescriptorResources();
     void DestroyScreenVertexBuffer();
-    void RecordScreenDraws(VkCommandBuffer commandBuffer);
+    void RecordScreenDraws(VkCommandBuffer commandBuffer, vk::ScreenDrawPhaseVK phase);
+    void AppendScreenBatch(std::uint32_t textureId, std::uint32_t indexCount, vk::ScreenDrawPhaseVK phase);
     void PushScreenQuad(const TLVertex* quad, std::uint32_t textureId);
     bool CreateCommandPool();
     bool CreateSyncObjects();
@@ -251,19 +259,23 @@ class EngineVK : public EngineDummy
 
     // Per-frame 2D draw accumulation. Vertices/indices are built during the
     // game's Draw2D/DrawPoly/DrawLine calls and emitted in RecordScreenDraws.
-    // _screenBatches records (textureId, indexCount) run-length boundaries so
-    // the emit loop can bind a new descriptor set only when the texture changes.
+    // _screenBatches records phase-aware index ranges so background software-T&L
+    // geometry can render before the world while UI remains an overlay.
     std::vector<TLVertex> _screenVertices;
     std::vector<std::uint16_t> _screenIndices;
     struct ScreenBatchVK
     {
         std::uint32_t textureId = 0;
+        std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
+        vk::ScreenDrawPhaseVK phase = vk::ScreenDrawPhaseVK::Overlay;
     };
     std::vector<ScreenBatchVK> _screenBatches;
     const TLVertexTable* _screenMesh = nullptr;
     std::size_t _screenMeshBase = 0;
     std::uint32_t _screenTextureId = 0;
+    vk::ScreenDrawPhaseVK _screenMeshPhase = vk::ScreenDrawPhaseVK::Overlay;
+    bool _screenBuffersUploaded = false;
 
     TextBankVK* _textBank = nullptr;
     std::unordered_map<std::uint32_t, TextureVK*> _textureRegistry;
@@ -301,7 +313,6 @@ class EngineVK : public EngineDummy
     void UpdateShadowFrameConstants();
     bool CreateShadowDepthPipeline();
     bool CompileShader(const char* source, int stage, std::vector<uint32_t>& spirv, std::string& error);
-
 
     friend class VertexBufferVK;
     friend class TextureVK;

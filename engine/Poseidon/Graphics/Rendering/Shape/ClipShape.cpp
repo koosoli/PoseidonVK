@@ -204,6 +204,7 @@ void FaceArray::Draw(const IAnimator* matSource, TLVertexTable& tlTable, const L
 {
     DoAssert(_sections.Size() == 0 || _sections[_sections.Size() - 1].end == End());
     Engine* engine = GEngine;
+    const ClipFlags drawClipFlags = clipFlags;
     if ((spec & OnSurface) == 0)
     {
         ClipFlags andClip = clipFlags;
@@ -214,7 +215,11 @@ void FaceArray::Draw(const IAnimator* matSource, TLVertexTable& tlTable, const L
         }
     }
 
-    engine->PrepareMesh(render::SplitLegacy(spec));
+    ClipFlags backendClipFlags = drawClipFlags;
+    const ClipFlags lightHint = mesh.GetAndHints() & ClipLightMask;
+    if (lightHint == ClipLightCloud || lightHint == ClipLightStars)
+        backendClipFlags |= lightHint;
+    engine->PrepareMesh(render::SplitLegacy(spec), backendClipFlags);
     if (spec & (OnSurface | IsOnSurface))
     {
         engine->SetBias(0x10);

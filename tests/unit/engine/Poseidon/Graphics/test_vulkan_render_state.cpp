@@ -2,6 +2,7 @@
 
 #include <PoseidonVK/RenderStateVK.hpp>
 #include <PoseidonVK/PipelineCacheVK.hpp>
+#include <PoseidonVK/ScreenDrawRoutingVK.hpp>
 
 TEST_CASE("Vulkan render state maps cull and winding descriptors", "[vulkan][render-state]")
 {
@@ -10,12 +11,10 @@ TEST_CASE("Vulkan render state maps cull and winding descriptors", "[vulkan][ren
     CHECK(Poseidon::vk::ToVkCullMode(Poseidon::render::CullMode::None) == VK_CULL_MODE_NONE);
 
     CHECK(Poseidon::vk::ToVkFrontFace(Poseidon::render::FrontFaceMode::CW) == VK_FRONT_FACE_CLOCKWISE);
-    CHECK(Poseidon::vk::ToVkFrontFace(Poseidon::render::FrontFaceMode::CCW) ==
-          VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    CHECK(Poseidon::vk::ToVkFrontFace(Poseidon::render::FrontFaceMode::CCW) == VK_FRONT_FACE_COUNTER_CLOCKWISE);
 
     const VkPipelineRasterizationStateCreateInfo raster =
-        Poseidon::vk::BuildRasterizationState(Poseidon::render::CullMode::None,
-                                              Poseidon::render::FrontFaceMode::CW);
+        Poseidon::vk::BuildRasterizationState(Poseidon::render::CullMode::None, Poseidon::render::FrontFaceMode::CW);
     CHECK(raster.sType == VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
     CHECK(raster.polygonMode == VK_POLYGON_MODE_FILL);
     CHECK(raster.cullMode == VK_CULL_MODE_NONE);
@@ -23,8 +22,7 @@ TEST_CASE("Vulkan render state maps cull and winding descriptors", "[vulkan][ren
     CHECK(raster.lineWidth == 1.0f);
 
     const VkPipelineRasterizationStateCreateInfo onSurface =
-        Poseidon::vk::BuildRasterizationState(Poseidon::render::CullMode::Back,
-                                              Poseidon::render::FrontFaceMode::CW,
+        Poseidon::vk::BuildRasterizationState(Poseidon::render::CullMode::Back, Poseidon::render::FrontFaceMode::CW,
                                               Poseidon::render::SurfaceMode::OnSurface);
     CHECK(onSurface.depthBiasEnable == VK_TRUE);
     CHECK(onSurface.depthBiasConstantFactor == -1.0f);
@@ -188,3 +186,20 @@ TEST_CASE("Vulkan pipeline key hashing", "[vulkan][render-state]")
     CHECK(k1 != k4);
 }
 
+TEST_CASE("Vulkan software-T&L routing keeps clipped sky geometry behind the scene", "[vulkan][render-state]")
+{
+    Poseidon::render::LegacySpec horizon;
+    horizon.backend = Poseidon::render::Backend::NoZWrite;
+    Poseidon::render::LegacySpec hud;
+    hud.backend = Poseidon::render::Backend::NoZBuf | Poseidon::render::Backend::NoZWrite;
+
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext({}, ClipLightCloud) ==
+          Poseidon::vk::ScreenDrawPhaseVK::Background);
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext({}, ClipLightStars) ==
+          Poseidon::vk::ScreenDrawPhaseVK::Background);
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext({}, ClipLightSun) == Poseidon::vk::ScreenDrawPhaseVK::Overlay);
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext(horizon, ClipUser0) ==
+          Poseidon::vk::ScreenDrawPhaseVK::Background);
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext(hud, ClipUser0) == Poseidon::vk::ScreenDrawPhaseVK::Overlay);
+    CHECK(Poseidon::vk::ScreenDrawPhaseFromLegacyContext({}, 0) == Poseidon::vk::ScreenDrawPhaseVK::Overlay);
+}

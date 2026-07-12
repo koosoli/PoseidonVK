@@ -84,15 +84,11 @@ void Shape::Draw(class IAnimator* matSource, const LightList& lights, ClipFlags 
 
     Engine* engine = GEngine;
 
-    const bool vkSkyCapture = engine->ConsumesRenderFramePlan() &&
-                              render::Has(render::SplitLegacy(spec).backend, render::Backend::NoZBuf);
-    // The Vulkan backend currently captures only T&L draws. The sky dome is
-    // user-clipped by the legacy path, which otherwise drops it into Vulkan's
-    // unimplemented queue renderer. Terrain subsequently overwrites the lower
-    // dome, so capturing its mesh restores the visible sky without changing
-    // the legacy renderer's clipping behavior.
-    bool tlAble = ((spec & OnSurface) == 0 || engine->GetTLOnSurface()) &&
-                  ((clip & ClipUser0) == 0 || vkSkyCapture);
+    const bool vkSkyCapture =
+        engine->ConsumesRenderFramePlan() && render::Has(render::SplitLegacy(spec).backend, render::Backend::NoZBuf);
+    // The sky dome is user-clipped by the legacy path. Capture its mesh for
+    // frame-plan renderers while preserving the clipped fallback for horizon.
+    bool tlAble = ((spec & OnSurface) == 0 || engine->GetTLOnSurface()) && ((clip & ClipUser0) == 0 || vkSkyCapture);
 
     if (engine->GetTL() && EnableHWTLState && tlAble && _buffer)
     {
