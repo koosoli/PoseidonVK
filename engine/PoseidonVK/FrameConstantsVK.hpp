@@ -32,7 +32,11 @@ struct FrameConstantsVK
     float cascadeVP[4][16] = {};   // per-cascade light VP matrices (column-major)
     float cascadeSplits[4] = {};   // per-tier select distance
     float cascadeCtl[4] = {};      // {count, fadeRange, biasBase, omniCount}
-    float camFwd[4] = {};};
+    float camFwd[4] = {};
+    float camPos[4] = {};  // world-space camera position
+    float specularColor[4] = {};  // RGB + power.w
+    float specularCtrl[4] = {};   // x = enabled
+};
 
 static_assert(sizeof(GfxMatrix) == 64);
 static_assert(offsetof(FrameConstantsVK, view) == 0);
@@ -56,7 +60,10 @@ static_assert(offsetof(FrameConstantsVK, cascadeVP) == 864);
 static_assert(offsetof(FrameConstantsVK, cascadeSplits) == 1120);
 static_assert(offsetof(FrameConstantsVK, cascadeCtl) == 1136);
 static_assert(offsetof(FrameConstantsVK, camFwd) == 1152);
-static_assert(sizeof(FrameConstantsVK) == 1168);
+static_assert(offsetof(FrameConstantsVK, camPos) == 1168);
+static_assert(offsetof(FrameConstantsVK, specularColor) == 1184);
+static_assert(offsetof(FrameConstantsVK, specularCtrl) == 1200);
+static_assert(sizeof(FrameConstantsVK) == 1216);
 
 inline float ChannelToFloat(std::uint32_t value) noexcept
 {
@@ -128,6 +135,25 @@ inline FrameConstantsVK BuildFrameConstants(const render::frame::Frame& frame) n
         constants.localLightDirection[i][3] =
             light.kind == render::frame::LocalLightKind::Spot ? 1.0f : 0.0f;
     }
+
+    // Extract camera world position from view matrix.
+    // view = [R | t] (row-major D3DMATRIX) where t = -R * camPos
+    // camPos = -R^T * t
+    {
+        const auto& v = constants.view;
+        constants.camPos[0] = -(v.m[0][0] * v.m[0][3] + v.m[1][0] * v.m[1][3] + v.m[2][0] * v.m[2][3]);
+        constants.camPos[1] = -(v.m[0][1] * v.m[0][3] + v.m[1][1] * v.m[1][3] + v.m[2][1] * v.m[2][3]);
+        constants.camPos[2] = -(v.m[0][2] * v.m[0][3] + v.m[1][2] * v.m[1][3] + v.m[2][2] * v.m[2][3]);
+        constants.camPos[3] = 0.0f;
+    }
+
+    // Default specular (white, power 32, always enabled)
+    constants.specularColor[0] = 0.8f;
+    constants.specularColor[1] = 0.8f;
+    constants.specularColor[2] = 0.8f;
+    constants.specularColor[3] = 32.0f;
+    constants.specularCtrl[0] = 1.0f;
+
     return constants;
 }
 

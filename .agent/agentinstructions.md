@@ -9,15 +9,21 @@ propose an update to this file.
 
 ## Core Project Goals
 
-1. **Modernize for Vulkan:** Progressively move the CWR-CE Poseidon engine
-   toward a clean, explicit Vulkan rendering backend.
-2. **High Maintainability for Humans and AI:** Keep code boundaries explicit,
+1. **Feature Parity With the Original Game:** Every feature the original
+   Arma: Cold War Assault / Operation Flashpoint had must remain working.
+   No regression is acceptable — if a feature worked before, any change that
+   breaks it must be caught and fixed. This applies to rendering, gameplay,
+   AI, audio, networking, scripting, and all other engine systems.
+2. **Modernize for Vulkan:** Progressively move the CWR-CE Poseidon engine
+   toward a clean, explicit Vulkan rendering backend without regressing
+   original-game features.
+3. **High Maintainability for Humans and AI:** Keep code boundaries explicit,
    modular, and easy to parse. Avoid dense or clever abstractions that make the
    old engine harder to reason about.
-3. **Upstream Compatibility:** Preserve compatibility with the original
+4. **Upstream Compatibility:** Preserve compatibility with the original
    Arma: Cold War Assault data layer and frame behavior where practical, so the
    fork can keep rebasing simulation, gameplay, and asset fixes from upstream.
-4. **Long-Term Asset Evolution:** Build foundations that can eventually support
+5. **Long-Term Asset Evolution:** Build foundations that can eventually support
    modern Arma Reforger/Enfusion-style asset and modding workflows.
 
 ## Workflow Guidelines
@@ -83,7 +89,11 @@ Vulkan until the mesh, texture, material, and draw paths have actually landed.
    GL33/Vulkan headers and direct GPU handles.
 3. **Observability:** Prefer explicit logging and frame-validation telemetry
    when a resource or frame invariant can fail at runtime.
-4. **GL33 visual parity:** Treat GL33 as the reference renderer until Vulkan is
+4. **Original-game feature parity:** Every engine feature (rendering, gameplay,
+   AI, audio, networking, scripting, controls, config) must be preserved.
+   Test regressions against the original game's known behavior and GL33 as the
+   renderer reference.
+5. **GL33 visual parity:** Treat GL33 as the reference renderer until Vulkan is
    proven. Backend-neutral work must not degrade GL33 correctness.
 
 ## Architectural Boundaries

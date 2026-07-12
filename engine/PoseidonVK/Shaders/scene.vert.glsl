@@ -29,6 +29,9 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 localLightDirection[8];
     vec4 grassParams;
     vec4 time;
+    vec4 camPos;
+    vec4 specularColor;
+    vec4 specularCtrl;
 } frame;
 
 // Per-draw constants uploaded by the host from the backend-neutral frame plan.

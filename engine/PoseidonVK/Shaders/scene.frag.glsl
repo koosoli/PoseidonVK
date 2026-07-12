@@ -32,6 +32,9 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 cascadeSplits;
     vec4 cascadeCtl;
     vec4 camFwd;
+    vec4 camPos;
+    vec4 specularColor;
+    vec4 specularCtrl;
 } frame;
 
 struct DrawConstants
@@ -221,6 +224,16 @@ void main()
     else // kFamilyNormal — single-texture directionally lit
     {
         baseColor = c0.rgb * light;
+        if (frame.specularCtrl.x > 0.5 && frame.lightingParams.x > 0.5)
+        {
+            vec3 n = normalize(vWorldNormal);
+            vec3 v = normalize(frame.camPos.xyz - vWorldPos);
+            vec3 l = normalize(-frame.sunDirection.xyz);
+            vec3 h = normalize(l + v);
+            float NdotH = max(dot(n, h), 0.0);
+            float specPow = max(frame.specularColor.w, 1.0);
+            baseColor += frame.specularColor.rgb * pow(NdotH, specPow);
+        }
         baseAlpha = c0.a;
     }
 
@@ -246,7 +259,7 @@ void main()
             float ts = frame.shadowCtl.w;
             float prevEdge = (ci > 0) ? frame.cascadeSplits[ci - 1] : 0.0;
             float ciMetric = (ci < omniN) ? dist3D : eyeDepth;
-            float band = (frame.cascadeSplits[ci] - prevEdge) * 0.15;
+            float band = (frame.cascadeSplits[ci] - prevEdge) * 0.40;
             float bw = (ci + 1 < nC) ? clamp((ciMetric - (frame.cascadeSplits[ci] - band)) / max(band, 0.001), 0.0, 1.0) : 0.0;
             float litSum = 0.0;
             float wSum = 0.0;
