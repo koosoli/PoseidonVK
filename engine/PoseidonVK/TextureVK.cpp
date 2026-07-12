@@ -18,6 +18,7 @@
 #include <Poseidon/IO/Streams/QBStream.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <vector>
 
@@ -201,17 +202,28 @@ bool TextureVK::Init(RStringB name)
     // palette-expand paths (PacP8 → PacARGB1555) get the right VkFormat and the
     // transcoder in UploadMips fires correctly.
     const FormatInfo fi = PacFormatToVk(uploadFmt);
-    const uint32_t levels = static_cast<uint32_t>(_nMipmaps);
+    // Compute the full mip chain so the VkImage backing covers all levels.
+    // Non-DXT textures will have missing levels generated via vkCmdBlitImage;
+    // DXT textures are limited to whatever the file provides.
+    const bool canGenerateMips = (sourceFormat != PacDXT1 && sourceFormat != PacDXT2 &&
+                                  sourceFormat != PacDXT3 && sourceFormat != PacDXT4 &&
+                                  sourceFormat != PacDXT5);
+    const int fullMipCount = canGenerateMips
+        ? static_cast<int>(std::bit_width(
+              std::max(static_cast<uint32_t>(_w), static_cast<uint32_t>(_h))))
+        : _nMipmaps;
+    const uint32_t levels = static_cast<uint32_t>(fullMipCount);
 
     for (int i = 0; i < _nMipmaps; ++i)
         _mipmaps[i].SetDestFormat(uploadFmt, 8);
 
-    // Create device-local image + view
+    // Create device-local image + view with full mip chain capacity.
+    // TRANSFER_SRC_BIT is needed when blit-generating missing mip levels.
     VkResult r = vk::CreateImage2D(
         _engine._physicalDevice, _engine._device,
         static_cast<uint32_t>(_w), static_cast<uint32_t>(_h), levels,
         fi.vkFmt,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         _image);
     if (r != VK_SUCCESS)
@@ -220,23 +232,21 @@ bool TextureVK::Init(RStringB name)
         return true; // fallback
     }
 
-    // Transition whole image to TRANSFER_DST
+    // Transition first _nMipmaps (file-provided) to TRANSFER_DST for upload;
+    // the remaining levels start UNDEFINED and will be transitioned during
+    // the blit generation pass inside UploadMips.
     vk::TransitionImageLayout(_engine._device, _engine._commandPool, _engine._graphicsQueue,
-                              _image.image, levels,
+                              _image.image, static_cast<uint32_t>(_nMipmaps),
                               VK_IMAGE_LAYOUT_UNDEFINED,
                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-    // Upload each mip via a host-visible staging buffer
+    // Upload file mips and generate any missing levels.  This function now
+    // handles ALL layout transitions: file mips arrive in TRANSFER_DST, and
+    // on success every mip level ends in SHADER_READ_ONLY_OPTIMAL.
     if (!UploadMips())
     {
         LOG_WARN(Graphics, "TextureVK: mip upload partial for '{}'", (const char*)name);
     }
-
-    // Transition to SHADER_READ_ONLY
-    vk::TransitionImageLayout(_engine._device, _engine._commandPool, _engine._graphicsQueue,
-                              _image.image, levels,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     // Create sampler
     VkSamplerCreateInfo si{};
@@ -439,6 +449,135 @@ bool TextureVK::UploadMips()
 
         vk::DestroyBuffer(_engine._device, staging);
     }
+
+    // -----------------------------------------------------------------------
+    // Generate missing mip levels + finalize layout
+    // -----------------------------------------------------------------------
+    // File mips are now in TRANSFER_DST_OPTIMAL.  Non-DXT textures may need
+    // the remaining levels generated via vkCmdBlitImage.  After that (or
+    // immediately if no generation is needed) everything transitions to
+    // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL.
+
+    const bool canGenerate = (sharedFmt != PacDXT1 && sharedFmt != PacDXT2 &&
+                              sharedFmt != PacDXT3 && sharedFmt != PacDXT4 &&
+                              sharedFmt != PacDXT5);
+    const uint32_t fullMipCount = static_cast<uint32_t>(canGenerate
+        ? std::bit_width(std::max(static_cast<uint32_t>(_w), static_cast<uint32_t>(_h)))
+        : _nMipmaps);
+    const uint32_t fileMipCount = static_cast<uint32_t>(_nMipmaps);
+
+    if (fullMipCount <= fileMipCount)
+    {
+        // No generation needed — just transition file mips to SHADER_READ_ONLY.
+        vk::TransitionImageLayout(_engine._device, _engine._commandPool, _engine._graphicsQueue,
+                                  _image.image, fileMipCount,
+                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        return true;
+    }
+
+    // Need to generate missing mip levels via blit.
+    _nMipmaps = static_cast<int>(fullMipCount);
+
+    VkCommandBuffer cb;
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = _engine._commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    vkAllocateCommandBuffers(_engine._device, &allocInfo, &cb);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cb, &beginInfo);
+
+    // Helper lambda: pipeline barrier to transition a range of mip levels
+    auto imageBarrier = [&](VkPipelineStageFlags srcMask, VkPipelineStageFlags dstMask,
+                            uint32_t baseMip, uint32_t mipCount,
+                            VkImageLayout oldLayout, VkImageLayout newLayout)
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = _image.image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = baseMip;
+        barrier.subresourceRange.levelCount = mipCount;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = 0;
+        vkCmdPipelineBarrier(cb, srcMask, dstMask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    };
+
+    // Transition file mips from TRANSFER_DST to TRANSFER_SRC for blit source
+    imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                 0, fileMipCount,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+    int srcW = _w, srcH = _h;
+    for (uint32_t skip = 1; skip < fileMipCount; ++skip) { srcW = std::max(srcW / 2, 1); srcH = std::max(srcH / 2, 1); }
+
+    for (uint32_t i = fileMipCount; i < fullMipCount; ++i)
+    {
+        int dstW = std::max(srcW / 2, 1);
+        int dstH = std::max(srcH / 2, 1);
+
+        VkImageBlit blit{};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        blit.srcOffsets[0] = {0, 0, 0};
+        blit.srcOffsets[1] = {srcW, srcH, 1};
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+        blit.dstOffsets[0] = {0, 0, 0};
+        blit.dstOffsets[1] = {dstW, dstH, 1};
+
+        // Transition destination mip UNDEFINED → TRANSFER_DST
+        imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     i, 1,
+                     VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        vkCmdBlitImage(cb, _image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       _image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &blit, VK_FILTER_LINEAR);
+
+        srcW = dstW;
+        srcH = dstH;
+    }
+
+    // Transition file mips (TRANSFER_SRC) and generated mips (TRANSFER_DST) to SHADER_READ_ONLY
+    imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                 0, fileMipCount,
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (fullMipCount > fileMipCount)
+    {
+        imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                     fileMipCount, fullMipCount - fileMipCount,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    vkEndCommandBuffer(cb);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cb;
+    vkQueueSubmit(_engine._graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(_engine._graphicsQueue);
+    vkFreeCommandBuffers(_engine._device, _engine._commandPool, 1, &cb);
     return true;
 }
 
