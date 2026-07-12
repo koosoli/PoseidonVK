@@ -3699,7 +3699,8 @@ void EngineVK::RecordScreenDraws(VkCommandBuffer commandBuffer, vk::ScreenDrawPh
         const std::uint32_t samplerFilter = static_cast<std::uint32_t>(batch.descriptor.sampler.filter);
         const std::uint32_t samplerClamp = vk::BuildSamplerClampMask(batch.descriptor.sampler);
         const vk::ScreenPushConstantsVK constants = vk::BuildScreenPushConstants(
-            _width, _height, static_cast<std::uint32_t>(batch.descriptor.alpha), batch.descriptor.alphaRef);
+            _width, _height, static_cast<std::uint32_t>(batch.descriptor.alpha), batch.descriptor.alphaRef,
+            static_cast<std::uint32_t>(batch.descriptor.fog), _lastFrameConstants.fogColor);
         vkCmdPushConstants(commandBuffer, _screenPipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            vk::kScreenPushConstantsSize, &constants);

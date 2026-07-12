@@ -97,6 +97,7 @@ static_assert(kSceneVertexAttributeCount == 3);
 //   location 1: float rhw  (R32_SFLOAT,       offset 12) — reciprocal w
 //   location 2: vec4 color (B8G8R8A8_UNORM,   offset 16) — packed BGRA
 //   location 3: vec2 uv    (R32G32_SFLOAT,    offset 24) — texcoord 0
+//   location 4: vec4 spec  (B8G8R8A8_UNORM,   offset 20) — legacy fog factor
 //
 // The TLVertex struct also carries specular (offset 20) and a second texcoord
 // (offset 32); those are skipped here because the minimal 2D fragment shader
@@ -106,7 +107,8 @@ inline constexpr uint32_t kScreenVertexLocationPosition = 0;
 inline constexpr uint32_t kScreenVertexLocationRhw = 1;
 inline constexpr uint32_t kScreenVertexLocationColor = 2;
 inline constexpr uint32_t kScreenVertexLocationTexcoord = 3;
-inline constexpr uint32_t kScreenVertexAttributeCount = 4;
+inline constexpr uint32_t kScreenVertexLocationSpecular = 4;
+inline constexpr uint32_t kScreenVertexAttributeCount = 5;
 
 inline constexpr uint32_t kScreenVertexBinding = 0;
 inline constexpr VkDeviceSize kScreenVertexStride = 40; // full TLVertex
@@ -114,11 +116,13 @@ inline constexpr VkDeviceSize kScreenVertexStride = 40; // full TLVertex
 inline constexpr VkDeviceSize kScreenVertexPositionOffset = 0;
 inline constexpr VkDeviceSize kScreenVertexRhwOffset = 12;
 inline constexpr VkDeviceSize kScreenVertexColorOffset = 16;
+inline constexpr VkDeviceSize kScreenVertexSpecularOffset = 20;
 inline constexpr VkDeviceSize kScreenVertexTexcoordOffset = 24;
 
 inline constexpr VkFormat kScreenVertexPositionFormat = VK_FORMAT_R32G32B32_SFLOAT;
 inline constexpr VkFormat kScreenVertexRhwFormat = VK_FORMAT_R32_SFLOAT;
 inline constexpr VkFormat kScreenVertexColorFormat = VK_FORMAT_B8G8R8A8_UNORM;
+inline constexpr VkFormat kScreenVertexSpecularFormat = VK_FORMAT_B8G8R8A8_UNORM;
 inline constexpr VkFormat kScreenVertexTexcoordFormat = VK_FORMAT_R32G32_SFLOAT;
 
 inline VkVertexInputBindingDescription MakeScreenVertexBindingDescription() noexcept
@@ -170,13 +174,24 @@ inline VkVertexInputAttributeDescription MakeScreenVertexTexcoordAttribute() noe
     return attribute;
 }
 
+inline VkVertexInputAttributeDescription MakeScreenVertexSpecularAttribute() noexcept
+{
+    VkVertexInputAttributeDescription attribute{};
+    attribute.location = kScreenVertexLocationSpecular;
+    attribute.binding = kScreenVertexBinding;
+    attribute.format = kScreenVertexSpecularFormat;
+    attribute.offset = kScreenVertexSpecularOffset;
+    return attribute;
+}
+
 inline std::array<VkVertexInputAttributeDescription, kScreenVertexAttributeCount>
 MakeScreenVertexAttributeDescriptions() noexcept
 {
     return {MakeScreenVertexPositionAttribute(),
-            MakeScreenVertexRhwAttribute(),
-            MakeScreenVertexColorAttribute(),
-            MakeScreenVertexTexcoordAttribute()};
+             MakeScreenVertexRhwAttribute(),
+             MakeScreenVertexColorAttribute(),
+            MakeScreenVertexTexcoordAttribute(),
+            MakeScreenVertexSpecularAttribute()};
 }
 
 } // namespace Poseidon::vk

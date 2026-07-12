@@ -17,15 +17,20 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in float inRhw;
 layout(location = 2) in vec4 inColor;
 layout(location = 3) in vec2 inTexcoord;
+layout(location = 4) in vec4 inSpecular;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out vec2 vTexcoord;
+layout(location = 2) out float vFogFactor;
 
 layout(push_constant) uniform ScreenConstants
 {
     vec2 vpScale; // {2/width, 2/height}
     uint alphaMode;
     float alphaRef;
+    vec4 fogColor;
+    uint fogMode;
+    vec3 _pad;
 } pc;
 
 void main()
@@ -38,4 +43,5 @@ void main()
 
     vColor = inColor.zyxw;
     vTexcoord = inTexcoord;
+    vFogFactor = inSpecular.a;
 }
