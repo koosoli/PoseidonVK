@@ -552,6 +552,15 @@ bool TextureVK::UploadMips()
                        _image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        1, &blit, VK_FILTER_LINEAR);
 
+        // Transition this mip to TRANSFER_SRC so it can be used as source for the next level
+        if (i < fullMipCount - 1)
+        {
+            imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         i, 1,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        }
+
         srcW = dstW;
         srcH = dstH;
     }
