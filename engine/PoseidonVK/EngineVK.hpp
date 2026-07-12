@@ -67,6 +67,15 @@ class EngineVK : public EngineDummy
                   const Rect2DPixel& clip, int specFlags) override;
     void DrawLine(const Line2DAbs& line, PackedColor c0, PackedColor c1, const Rect2DAbs& clip) override;
 
+    // Legacy software T&L compatibility path used by the options notebook's
+    // pre-transformed 3D controls. These emit through the screen pipeline.
+    void PrepareTriangle(const MipInfo& mip, int specFlags) override;
+    void DrawPolygon(const VertexIndex* indices, int nVertices) override;
+    void DrawSection(const FaceArray& faces, Offset begin, Offset end) override;
+    void PrepareMesh(const render::LegacySpec& spec) override;
+    void BeginMesh(TLVertexTable& mesh, const render::LegacySpec& spec) override;
+    void EndMesh(TLVertexTable& mesh) override;
+
     bool IsOpen() const override { return _open; }
     void SetMouseGrab(bool grab) override;
     bool IsMouseGrabbed() const override { return _mouseGrab; }
@@ -252,6 +261,9 @@ class EngineVK : public EngineDummy
         std::uint32_t indexCount = 0;
     };
     std::vector<ScreenBatchVK> _screenBatches;
+    const TLVertexTable* _screenMesh = nullptr;
+    std::size_t _screenMeshBase = 0;
+    std::uint32_t _screenTextureId = 0;
 
     TextBankVK* _textBank = nullptr;
     std::unordered_map<std::uint32_t, TextureVK*> _textureRegistry;

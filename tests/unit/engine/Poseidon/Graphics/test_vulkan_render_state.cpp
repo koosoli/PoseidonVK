@@ -21,6 +21,14 @@ TEST_CASE("Vulkan render state maps cull and winding descriptors", "[vulkan][ren
     CHECK(raster.cullMode == VK_CULL_MODE_NONE);
     CHECK(raster.frontFace == VK_FRONT_FACE_CLOCKWISE);
     CHECK(raster.lineWidth == 1.0f);
+
+    const VkPipelineRasterizationStateCreateInfo onSurface =
+        Poseidon::vk::BuildRasterizationState(Poseidon::render::CullMode::Back,
+                                              Poseidon::render::FrontFaceMode::CW,
+                                              Poseidon::render::SurfaceMode::OnSurface);
+    CHECK(onSurface.depthBiasEnable == VK_TRUE);
+    CHECK(onSurface.depthBiasConstantFactor == -1.0f);
+    CHECK(onSurface.depthBiasSlopeFactor == -1.0f);
 }
 
 TEST_CASE("Vulkan render state maps depth descriptors", "[vulkan][render-state]")
@@ -168,10 +176,15 @@ TEST_CASE("Vulkan pipeline key hashing", "[vulkan][render-state]")
     k3.depth = Poseidon::render::DepthMode::ReadOnly;
     k3.blend = Poseidon::render::BlendMode::AlphaBlend;
 
+    PipelineKeyVK k4 = k1;
+    k4.surface = Poseidon::render::SurfaceMode::OnSurface;
+
     PipelineKeyHash hash;
     CHECK(hash(k1) == hash(k2));
     CHECK(hash(k1) != hash(k3));
+    CHECK(hash(k1) != hash(k4));
     CHECK(k1 == k2);
     CHECK(k1 != k3);
+    CHECK(k1 != k4);
 }
 

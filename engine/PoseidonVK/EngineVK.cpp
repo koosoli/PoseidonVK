@@ -6,6 +6,7 @@
 #include <PoseidonVK/BootstrapPushConstantsVK.hpp>
 #include <Poseidon/Graphics/Core/MatrixConversion.hpp>
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
+#include <Poseidon/Graphics/Rendering/Shape/ClipShape.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
 #include <Poseidon/Graphics/Rendering/Primitives/Clip2D.hpp>
 #include <Poseidon/Graphics/Textures/TexturePreload.hpp>
@@ -2315,6 +2316,7 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 key.frontFace = static_cast<render::FrontFaceMode>(draw.frontFace);
                 key.depth = static_cast<render::DepthMode>(draw.depth);
                 key.blend = static_cast<render::BlendMode>(draw.blend);
+                key.surface = static_cast<render::SurfaceMode>(draw.surface);
 
                 VkPipeline pipeline = _scenePipelineCache.Get(key);
                 if (!pipeline)
@@ -2984,6 +2986,9 @@ void EngineVK::InitDraw(bool clear, PackedColor color)
     _screenVertices.clear();
     _screenIndices.clear();
     _screenBatches.clear();
+    _screenMesh = nullptr;
+    _screenMeshBase = 0;
+    _screenTextureId = 0;
 }
 
 VertexBuffer* EngineVK::CreateVertexBuffer(const Shape& src, VBType type)
@@ -3515,6 +3520,76 @@ void EngineVK::DrawLine(const Line2DAbs& line, PackedColor c0, PackedColor c1, c
     vertices[2].color = c1;
 
     DrawPoly(mip, vertices, 4, clip, specFlags);
+}
+
+void EngineVK::PrepareTriangle(const MipInfo& mip, int /*specFlags*/)
+{
+    _screenTextureId = GetOrCreateTextureResourceId(mip._texture);
+}
+
+void EngineVK::DrawPolygon(const VertexIndex* indices, int nVertices)
+{
+    if (!_screenMesh || !indices || nVertices < 3)
+        return;
+
+    const int meshVertexCount = _screenMesh->NVertex();
+    for (int i = 0; i < nVertices; ++i)
+    {
+        if (indices[i] < 0 || indices[i] >= meshVertexCount)
+            return;
+    }
+
+    const std::uint32_t indexCount = static_cast<std::uint32_t>((nVertices - 2) * 3);
+    for (int i = 1; i < nVertices - 1; ++i)
+    {
+        _screenIndices.push_back(static_cast<std::uint16_t>(_screenMeshBase + indices[0]));
+        _screenIndices.push_back(static_cast<std::uint16_t>(_screenMeshBase + indices[i]));
+        _screenIndices.push_back(static_cast<std::uint16_t>(_screenMeshBase + indices[i + 1]));
+    }
+
+    if (!_screenBatches.empty() && _screenBatches.back().textureId == _screenTextureId)
+    {
+        _screenBatches.back().indexCount += indexCount;
+    }
+    else
+    {
+        _screenBatches.push_back({_screenTextureId, indexCount});
+    }
+}
+
+void EngineVK::DrawSection(const FaceArray& faces, Offset begin, Offset end)
+{
+    for (Offset index = begin; index < end; faces.Next(index))
+    {
+        const Poly& face = faces[index];
+        DrawPolygon(face.GetVertexList(), face.N());
+    }
+}
+
+void EngineVK::PrepareMesh(const render::LegacySpec& /*spec*/)
+{
+    // Software-T&L vertices already carry their projected screen coordinates.
+}
+
+void EngineVK::BeginMesh(TLVertexTable& mesh, const render::LegacySpec& /*spec*/)
+{
+    const std::size_t vertexCount = static_cast<std::size_t>(mesh.NVertex());
+    if (_screenVertices.size() + vertexCount > std::numeric_limits<std::uint16_t>::max())
+    {
+        LOG_WARN(Graphics, "Vulkan: skipping software-T&L mesh with {} vertices; screen index range is exhausted",
+                 vertexCount);
+        _screenMesh = nullptr;
+        return;
+    }
+
+    _screenMeshBase = _screenVertices.size();
+    _screenVertices.insert(_screenVertices.end(), mesh.VertexData(), mesh.VertexData() + vertexCount);
+    _screenMesh = &mesh;
+}
+
+void EngineVK::EndMesh(TLVertexTable& /*mesh*/)
+{
+    _screenMesh = nullptr;
 }
 
 void EngineVK::PushScreenQuad(const TLVertex* quad, std::uint32_t textureId)

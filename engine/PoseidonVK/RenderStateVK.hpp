@@ -36,7 +36,8 @@ inline VkFrontFace ToVkFrontFace(render::FrontFaceMode mode) noexcept
 }
 
 inline VkPipelineRasterizationStateCreateInfo BuildRasterizationState(
-    render::CullMode cull, render::FrontFaceMode frontFace) noexcept
+    render::CullMode cull, render::FrontFaceMode frontFace,
+    render::SurfaceMode surface = render::SurfaceMode::Default) noexcept
 {
     VkPipelineRasterizationStateCreateInfo state{};
     state.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -44,6 +45,14 @@ inline VkPipelineRasterizationStateCreateInfo BuildRasterizationState(
     state.cullMode = ToVkCullMode(cull);
     state.frontFace = ToVkFrontFace(frontFace);
     state.lineWidth = 1.0f;
+    if (surface == render::SurfaceMode::OnSurface)
+    {
+        // Match GL33's glPolygonOffset(-1, -1) so roads and decals win their
+        // depth ties with terrain without biasing ordinary world geometry.
+        state.depthBiasEnable = VK_TRUE;
+        state.depthBiasConstantFactor = -1.0f;
+        state.depthBiasSlopeFactor = -1.0f;
+    }
     return state;
 }
 

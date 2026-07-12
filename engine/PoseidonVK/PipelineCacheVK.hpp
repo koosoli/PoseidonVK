@@ -5,7 +5,7 @@
 //
 // The scene uses a single pair of compiled shader modules (vertex + fragment)
 // shared across all pipeline variants. The only variable parts per variant are
-// the four GPU-state fields: cull, frontFace, depth, blend. These are hashed
+// cull, frontFace, depth, blend, and surface depth-bias state. These are hashed
 // into a map key and a new VkPipeline is created on first use.
 //
 // Usage:
@@ -27,7 +27,7 @@
 namespace Poseidon::vk
 {
 
-// Key: the four pipeline-state axes that require distinct VkPipeline objects.
+// Key: the pipeline-state axes that require distinct VkPipeline objects.
 // Sampler, fog, lighting, texgen etc. are resolved in-shader via push constants
 // or descriptors and do NOT require separate pipelines.
 struct PipelineKeyVK
@@ -36,11 +36,12 @@ struct PipelineKeyVK
     render::FrontFaceMode frontFace = render::FrontFaceMode::CW;
     render::DepthMode depth = render::DepthMode::Normal;
     render::BlendMode blend = render::BlendMode::Opaque;
+    render::SurfaceMode surface = render::SurfaceMode::Default;
 
     bool operator==(const PipelineKeyVK& o) const noexcept
     {
-        return cull == o.cull && frontFace == o.frontFace &&
-               depth == o.depth && blend == o.blend;
+        return cull == o.cull && frontFace == o.frontFace && depth == o.depth && blend == o.blend &&
+               surface == o.surface;
     }
 };
 
@@ -48,12 +49,13 @@ struct PipelineKeyHash
 {
     std::size_t operator()(const PipelineKeyVK& k) const noexcept
     {
-        // Pack four single-byte enum values into a 32-bit word and hash.
-        std::uint32_t packed =
-            (static_cast<std::uint32_t>(k.cull))       |
-            (static_cast<std::uint32_t>(k.frontFace) << 8) |
-            (static_cast<std::uint32_t>(k.depth)     << 16) |
-            (static_cast<std::uint32_t>(k.blend)     << 24);
+        // Pack five single-byte enum values and hash them together.
+        std::uint64_t packed =
+            (static_cast<std::uint64_t>(k.cull)) |
+            (static_cast<std::uint64_t>(k.frontFace) << 8) |
+            (static_cast<std::uint64_t>(k.depth) << 16) |
+            (static_cast<std::uint64_t>(k.blend) << 24) |
+            (static_cast<std::uint64_t>(k.surface) << 32);
         // FNV-1a mix
         std::size_t h = 2166136261u;
         h ^= packed;
@@ -69,6 +71,7 @@ inline PipelineKeyVK KeyFromDescriptor(const render::RenderPassDescriptor& desc)
     k.frontFace = desc.frontFace;
     k.depth     = desc.depth;
     k.blend     = desc.blend;
+    k.surface   = desc.surface;
     return k;
 }
 
@@ -188,7 +191,7 @@ private:
         stages[1].pName  = "main";
 
         VkPipelineRasterizationStateCreateInfo rasterizer =
-            BuildRasterizationState(key.cull, key.frontFace);
+            BuildRasterizationState(key.cull, key.frontFace, key.surface);
         VkPipelineDepthStencilStateCreateInfo depthStencil =
             BuildDepthStencilState(key.depth);
         VkPipelineColorBlendAttachmentState blendAttachment =
