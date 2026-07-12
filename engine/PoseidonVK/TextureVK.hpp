@@ -32,7 +32,14 @@ public:
     int AWidth(int /*level*/ = 0) const override { return _w; }
     int AHeight(int /*level*/ = 0) const override { return _h; }
     int ANMipmaps() const override { return _nMipmaps; }
-    void ASetNMipmaps(int) override {}
+    void ASetNMipmaps(int n) override
+    {
+        if (n > _nMipmaps)
+            n = _nMipmaps;
+        if (n < 1)
+            n = 1;
+        _nMipmaps = n;
+    }
 
     Color GetPixel(int level, float u, float v) const override;
     Color GetColor() override;
