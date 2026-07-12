@@ -145,7 +145,7 @@ TEST_CASE("Vulkan DrawConstants SSBO element stride matches the shader struct", 
 {
     // The shader declares DrawConstants as a std430 SSBO element; its size must
     // match Poseidon::vk::DrawConstantsVK so draws[0].world reads the right bytes.
-    STATIC_REQUIRE(sizeof(Poseidon::vk::DrawConstantsVK) == 160);
+    STATIC_REQUIRE(sizeof(Poseidon::vk::DrawConstantsVK) == 176);
     STATIC_REQUIRE(offsetof(Poseidon::vk::DrawConstantsVK, world) == 0);
 }
 
@@ -187,6 +187,16 @@ TEST_CASE("Vulkan scene fragment shader drives sun lighting from frame constants
     CHECK(fragmentSource.find("frame.lightingParams.x") != std::string::npos);
     CHECK(fragmentSource.find("-sunDir") != std::string::npos);
     CHECK(fragmentSource.find("* sunOn") != std::string::npos);
+}
+
+TEST_CASE("Vulkan scene fragment shader applies per-draw tint", "[vulkan][scene-shaders]")
+{
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const std::string fragmentSource = ReadTextFile(shaderDir / "scene.frag.glsl");
+
+    CHECK(fragmentSource.find("vec4 tint;") != std::string::npos);
+    CHECK(fragmentSource.find("baseColor *= tint.rgb") != std::string::npos);
+    CHECK(fragmentSource.find("baseAlpha *= tint.a") != std::string::npos);
 }
 
 TEST_CASE("Vulkan scene fragment shader refines terrain normals", "[vulkan][scene-shaders]")

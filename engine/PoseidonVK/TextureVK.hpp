@@ -58,6 +58,11 @@ public:
 
     VkDescriptorSet GetDescriptorSet() const;
     VkDescriptorSet GetDescriptorSet(std::uint32_t samplerFilter, std::uint32_t samplerClamp) const;
+    bool HasValidGpuImage() const noexcept override
+    {
+        return _image.image != VK_NULL_HANDLE && _image.view != VK_NULL_HANDLE &&
+               _sampler != VK_NULL_HANDLE && _descriptorSet != VK_NULL_HANDLE;
+    }
 
 private:
     bool UploadMips();

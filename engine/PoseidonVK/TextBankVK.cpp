@@ -145,10 +145,11 @@ Texture* TextBankVK::CreateDynamic(int w, int h, const void* rgba, uint32_t size
     si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    vkCreateSampler(_engine._device, &si, nullptr, &tex->_sampler);
-
-    // Register texture
-    _engine.RegisterTexture(tex);
+    if (vkCreateSampler(_engine._device, &si, nullptr, &tex->_sampler) != VK_SUCCESS)
+    {
+        LOG_WARN(Graphics, "TextBankVK: CreateDynamic sampler creation failed");
+        return tex;
+    }
 
     // Allocate and update descriptor set
     VkDescriptorSetAllocateInfo allocInfo{};
@@ -174,6 +175,11 @@ Texture* TextBankVK::CreateDynamic(int w, int h, const void* rgba, uint32_t size
         write.pImageInfo = &imageInfo;
 
         vkUpdateDescriptorSets(_engine._device, 1, &write, 0, nullptr);
+        _engine.RegisterTexture(tex);
+    }
+    else
+    {
+        LOG_WARN(Graphics, "TextBankVK: CreateDynamic descriptor allocation failed");
     }
 
     return tex;

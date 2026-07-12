@@ -31,6 +31,7 @@ struct SceneDraw
     int                  indexBegin    = 0;
     int                  indexCount    = 0;
     std::array<TextureHandle, 4> textures = {};
+    float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 // Visibility status for high-level features.  Used by BuildFrame to

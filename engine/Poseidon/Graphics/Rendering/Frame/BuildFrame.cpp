@@ -1,4 +1,5 @@
 #include <Poseidon/Graphics/Rendering/Frame/BuildFrame.hpp>
+#include <algorithm>
 #include <array>
 #include <string>
 #include <utility>
@@ -25,6 +26,7 @@ Draw makeDraw(const SceneDraw& d)
     out.indexBegin = d.indexBegin;
     out.indexCount = d.indexCount;
     out.textures = d.textures;
+    std::copy(std::begin(d.tint), std::end(d.tint), std::begin(out.tint));
     return out;
 }
 

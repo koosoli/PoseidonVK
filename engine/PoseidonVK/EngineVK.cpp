@@ -2946,17 +2946,11 @@ std::uint32_t GetOrCreateTextureResourceId(Texture* tex)
 {
     if (!tex)
         return TextureVK::kFallbackResourceId;
-    // If this is a real TextureVK, return its registered resource ID.
-    if (auto* tvk = dynamic_cast<TextureVK*>(tex))
+    // A captured resource ID must always resolve to a bindable image. Unknown
+    // texture implementations have no Vulkan descriptor, so record fallback.
+    if (auto* tvk = dynamic_cast<TextureVK*>(tex); tvk && tvk->HasValidGpuImage())
         return tvk->GetResourceId();
-    // Fallback for dummy/unknown textures — assign a stable ID per pointer.
-    static std::unordered_map<Texture*, std::uint32_t> s_texToId;
-    auto it = s_texToId.find(tex);
-    if (it != s_texToId.end())
-        return it->second;
-    const std::uint32_t id = TextureVK::AllocateResourceId();
-    s_texToId[tex] = id;
-    return id;
+    return TextureVK::kFallbackResourceId;
 }
 } // namespace
 
@@ -2972,14 +2966,17 @@ VkPipeline EngineVK::GetOrCreateScenePipeline(const render::RenderPassDescriptor
 
 void EngineVK::RegisterTexture(TextureVK* tex)
 {
-    if (tex)
+    if (tex && tex->HasValidGpuImage())
         _textureRegistry[tex->GetResourceId()] = tex;
 }
 
 void EngineVK::UnregisterTexture(TextureVK* tex)
 {
-    if (tex)
-        _textureRegistry.erase(tex->GetResourceId());
+    if (!tex)
+        return;
+    const auto it = _textureRegistry.find(tex->GetResourceId());
+    if (it != _textureRegistry.end() && it->second == tex)
+        _textureRegistry.erase(it);
 }
 
 TextureVK* EngineVK::ResolveTexture(std::uint32_t id) const
@@ -3128,6 +3125,14 @@ void EngineVK::PrepareMeshTL(const LightList& lights, const Matrix4& modelToWorl
     _currentDrawItem.specFlags = spec;
     _currentDrawItem.bias = GetBias();
     _currentDrawItem.passKindHint = GetPassKindHint();
+    if (GScene && render::Has(spec.routing, render::Routing::IsColored))
+    {
+        ColorVal tint = GScene->GetConstantColor();
+        _currentDrawItem.tint[0] = tint.R();
+        _currentDrawItem.tint[1] = tint.G();
+        _currentDrawItem.tint[2] = tint.B();
+        _currentDrawItem.tint[3] = tint.A();
+    }
 }
 
 void EngineVK::Draw2D(const Draw2DPars& pars, const Rect2DAbs& rect, const Rect2DAbs& clip)

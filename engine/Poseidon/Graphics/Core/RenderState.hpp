@@ -142,6 +142,7 @@ struct DrawItem
     // `SetMultiTexturing` early-out so the captured DrawItem always has the
     // *currently bound* multi-tex, not just the most recently rebound one.
     std::uint32_t backendTexture1ResourceId = 0;
+    float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // per-object constant colour / fade
 };
 
 // Map backend spec to PassId.  Pass selection depends entirely on Backend

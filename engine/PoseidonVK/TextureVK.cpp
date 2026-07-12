@@ -265,10 +265,11 @@ bool TextureVK::Init(RStringB name)
     si.maxLod = static_cast<float>(std::max(_nMipmaps - 1, 0));
     si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
 
-    vkCreateSampler(_engine._device, &si, nullptr, &_sampler);
-
-    // Register texture
-    _engine.RegisterTexture(this);
+    if (vkCreateSampler(_engine._device, &si, nullptr, &_sampler) != VK_SUCCESS)
+    {
+        LOG_WARN(Graphics, "TextureVK: sampler creation failed for '{}'", (const char*)name);
+        return true;
+    }
 
     // Allocate and update descriptor set
     VkDescriptorSetAllocateInfo allocInfo{};
@@ -294,6 +295,11 @@ bool TextureVK::Init(RStringB name)
         write.pImageInfo = &imageInfo;
 
         vkUpdateDescriptorSets(_engine._device, 1, &write, 0, nullptr);
+        _engine.RegisterTexture(this);
+    }
+    else
+    {
+        LOG_WARN(Graphics, "TextureVK: descriptor allocation failed for '{}'", (const char*)name);
     }
 
     return true;

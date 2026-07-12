@@ -234,7 +234,8 @@ TEST_CASE("Vulkan draw constants match std140-friendly layout", "[vulkan][draw-c
     STATIC_REQUIRE(offsetof(DrawConstantsVK, frontFace) == 112);
     STATIC_REQUIRE(offsetof(DrawConstantsVK, surface) == 128);
     STATIC_REQUIRE(offsetof(DrawConstantsVK, alphaRef) == 144);
-    STATIC_REQUIRE(sizeof(DrawConstantsVK) == 160);
+    STATIC_REQUIRE(offsetof(DrawConstantsVK, tint) == 160);
+    STATIC_REQUIRE(sizeof(DrawConstantsVK) == 176);
     STATIC_REQUIRE(Poseidon::vk::DrawConstantsByteSize(0) == 0);
     STATIC_REQUIRE(Poseidon::vk::DrawConstantsByteSize(3) == sizeof(DrawConstantsVK) * 3);
 }
@@ -265,6 +266,10 @@ TEST_CASE("Vulkan draw constants preserve draw resource and descriptor state", "
     draw.descriptor.shader = Poseidon::render::ShaderFamily::Detail;
     draw.descriptor.alphaRef = 127;
     draw.descriptor.stencilExclusion = true;
+    draw.tint[0] = 0.5f;
+    draw.tint[1] = 0.6f;
+    draw.tint[2] = 0.7f;
+    draw.tint[3] = 0.8f;
 
     const Poseidon::vk::DrawConstantsVK constants = Poseidon::vk::BuildDrawConstants(draw);
 
@@ -290,6 +295,8 @@ TEST_CASE("Vulkan draw constants preserve draw resource and descriptor state", "
     CHECK(constants.shader == static_cast<std::uint32_t>(Poseidon::render::ShaderFamily::Detail));
     CHECK(constants.alphaRef == 127);
     CHECK(constants.stencilExclusion == 1);
+    CHECK(constants.tint[0] == 0.5f);
+    CHECK(constants.tint[3] == 0.8f);
 }
 
 TEST_CASE("Vulkan frame draw constants preserve pass order", "[vulkan][draw-constants]")

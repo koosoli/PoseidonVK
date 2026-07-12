@@ -75,11 +75,12 @@ the expected visible behavior, and the most likely regression signs for the
 recent change. Avoid vague requests like "please test it"; give a compact
 checklist tied to the code that changed.
 
-For Vulkan bootstrap smoke tests, be explicit about the current renderer stage.
-Until Vulkan raster parity is implemented, `--render vulkan` should show only
-the current bootstrap primitive or clear-color stage while game simulation or
-audio continues. Do not ask the user to expect normal scene rendering from
-Vulkan until the mesh, texture, material, and draw paths have actually landed.
+For Vulkan smoke tests, be explicit about the current renderer stage. Vulkan
+now has a partial real-scene path (terrain, models, sky, water, cockpit,
+shadows, HUD, and six shader families), but it has not yet proven visual parity
+with GL33. Ask the user to compare the changed behavior against GL33 and name
+known risks such as legacy fallback ordering, material state, shadows, and
+texture handling. Do not claim parity from a successful launch alone.
 
 ## Regression-Proof Engineering Guidelines
 
@@ -134,18 +135,16 @@ formats, not as ad hoc conversion steps scattered through renderer code.
 
 ## Current Phase Notes
 
-Phase 0 is closed out in `.agent/POSEIDON_PHASE0_CLOSEOUT.md`. Phase 1 now has
-a working `PoseidonVK` bootstrap path: the backend registers, `--render vulkan`
-opens an SDL Vulkan window, creates an instance/surface/device/swapchain,
-clears/presents, draws a validation-friendly bootstrap triangle, reports
-availability, and handles the first resize/swapchain lifecycle cases under
-validation.
+The current dependency-driven roadmap lives in
+`.agent/PoseidonVK_integration_plan.md`; `README.md` is its public checklist.
+The immediate gate is Vulkan raster parity, not a new modern-renderer feature.
 
-The recommended Phase 2 entry slice is deliberately small:
-
-1. Keep GL33 as the reference renderer and continue manual GL33 smoke tests.
-2. Add Vulkan diagnostics that make RenderDoc/validation captures readable.
-3. Introduce backend-neutral frame/camera constants without leaking Vulkan
-   handles into shared `engine/Poseidon` contracts.
-4. Bind the uploaded frame constants from Vulkan shaders.
-5. Only then start uploading real terrain/model/HUD resources.
+1. Keep GL33 and upstream behavior as renderer and feature baselines.
+2. Fix the software-T&L sky/cloud/horizon fallback ordering regression.
+3. Close remaining material, UV, texture fallback, local-light, and shadow
+   parity gaps.
+4. Add representative GL33-versus-Vulkan captures, validation smoke checks,
+   and CPU/GPU timing baselines.
+5. Only after the gate passes, build the offscreen-pass, synchronization,
+   upload, compute, and capability infrastructure required by HDR and modern
+   visual work.

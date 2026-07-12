@@ -19,6 +19,8 @@ void main()
     vec4 c = vColor * texture(tex0, vTexcoord);
     if (c.a <= 0.0)
         discard;
+    float luma = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    c.rgb = mix(vec3(luma), c.rgb, 1.08);
     // Partial gamma boost to compensate for UNORM swapchain.
     c.rgb = pow(c.rgb, vec3(1.0 / 1.5));
     outColor = c;

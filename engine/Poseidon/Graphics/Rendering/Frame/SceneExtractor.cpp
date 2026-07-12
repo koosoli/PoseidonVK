@@ -9,6 +9,7 @@
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
 #include <Poseidon/World/World.hpp>
+#include <algorithm>
 #include <array>
 #include <string>
 #include <utility>
@@ -154,6 +155,7 @@ SceneDraw drawItemToSceneDraw(const DrawItem& item)
         out.textures[0].id = item.backendTextureResourceId;
         out.textures[1].id = item.backendTexture1ResourceId;
     }
+    std::copy(std::begin(item.tint), std::end(item.tint), std::begin(out.tint));
     return out;
 }
 

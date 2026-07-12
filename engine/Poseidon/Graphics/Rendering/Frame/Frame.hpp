@@ -123,6 +123,7 @@ struct Draw
     int indexBegin = 0; // index-buffer offset (raw)
     int indexCount = 0; // primitive count in indices
     std::array<TextureHandle, 4> textures = {};
+    float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 // Byte offset that glDrawElements' `indices` parameter expects (cast

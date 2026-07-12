@@ -97,6 +97,7 @@ void EngineGL33::PrepareMeshTLImpl(const FrameState& frame, const Matrix4& model
         constColor[2] = cc.B();
         constColor[3] = cc.A();
     }
+    memcpy(_currentDrawItem.tint, constColor, sizeof(constColor));
     if (memcmp(constColor, _psConstants.constColor, sizeof(constColor)) != 0)
     {
         memcpy(_psConstants.constColor, constColor, sizeof(constColor));

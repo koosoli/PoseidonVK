@@ -2,6 +2,7 @@
 
 #include <Poseidon/Graphics/Rendering/Frame/Frame.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -33,6 +34,7 @@ struct alignas(16) DrawConstantsVK
     std::uint32_t alphaRef = 0;
     std::uint32_t stencilExclusion = 0;
     std::uint32_t reserved[2] = {};
+    float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 static_assert(sizeof(GfxMatrix) == 64);
@@ -43,7 +45,8 @@ static_assert(offsetof(DrawConstantsVK, depth) == 96);
 static_assert(offsetof(DrawConstantsVK, frontFace) == 112);
 static_assert(offsetof(DrawConstantsVK, surface) == 128);
 static_assert(offsetof(DrawConstantsVK, alphaRef) == 144);
-static_assert(sizeof(DrawConstantsVK) == 160);
+static_assert(offsetof(DrawConstantsVK, tint) == 160);
+static_assert(sizeof(DrawConstantsVK) == 176);
 
 template <typename Enum>
 inline constexpr std::uint32_t EnumToUint(Enum value) noexcept
@@ -89,6 +92,7 @@ inline DrawConstantsVK BuildDrawConstants(const render::frame::Draw& draw) noexc
     constants.shader = EnumToUint(descriptor.shader);
     constants.alphaRef = descriptor.alphaRef;
     constants.stencilExclusion = descriptor.stencilExclusion ? 1u : 0u;
+    std::copy(std::begin(draw.tint), std::end(draw.tint), std::begin(constants.tint));
     return constants;
 }
 

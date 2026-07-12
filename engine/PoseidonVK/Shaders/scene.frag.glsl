@@ -60,6 +60,7 @@ struct DrawConstants
     uint alphaRef;
     uint stencilExclusion;
     uint reserved[2];
+    vec4 tint;
 };
 
 layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer
@@ -95,6 +96,7 @@ void main()
     uint alphaRef  = hasDraw ? drawConstants.draws[drawIdx].alphaRef : 0u;
     uint family    = hasDraw ? drawConstants.draws[drawIdx].shader   : kFamilyNormal;
     uint pass      = hasDraw ? drawConstants.draws[drawIdx].pass     : 0u;
+    vec4 tint      = hasDraw ? drawConstants.draws[drawIdx].tint     : vec4(1.0);
 
     // -----------------------------------------------------------------------
     // Directional (sun) + local lighting
@@ -174,21 +176,6 @@ void main()
     vec4 c1 = texture(tex1, vTexcoord1);
 
     // -----------------------------------------------------------------------
-    // Alpha test on c0 (all families)
-    // -----------------------------------------------------------------------
-    float refValue = float(alphaRef) / 255.0;
-    if (alphaMode == 3u) // TestAndBlend — coverage-AA discard
-    {
-        float cov = clamp((c0.a - refValue) / max(fwidth(c0.a), 1e-4) + 0.5, 0.0, 1.0);
-        if (cov <= 0.0) discard;
-        c0.a = cov;
-    }
-    else if (alphaMode == 1u) // Test — hard cutout
-    {
-        if (c0.a < refValue) discard;
-    }
-
-    // -----------------------------------------------------------------------
     // Shader-family blending
     // -----------------------------------------------------------------------
     vec3  baseColor;
@@ -196,11 +183,8 @@ void main()
 
     if (family == kFamilyShadow)
     {
-        // Shadow silhouette: black, alpha from tex0.
-        // Full material-alpha parity (constColor.a) deferred until per-draw
-        // constColor is uploaded; tex0.a is the best current approximation.
-        outColor = vec4(0.0, 0.0, 0.0, c0.a);
-        return;
+        baseColor = vec3(0.0);
+        baseAlpha = c0.a;
     }
     else if (family == kFamilyDetail)
     {
@@ -208,6 +192,27 @@ void main()
         baseColor = c0.rgb * light;
         baseColor *= clamp(c1.a * 2.0, 0.0, 1.0);
         baseAlpha = c0.a;
+    }
+
+    baseColor *= tint.rgb;
+    baseAlpha *= tint.a;
+
+    float refValue = float(alphaRef) / 255.0;
+    if (alphaMode == 3u) // TestAndBlend — coverage-AA discard
+    {
+        float cov = clamp((baseAlpha - refValue) / max(fwidth(baseAlpha), 1e-4) + 0.5, 0.0, 1.0);
+        if (cov <= 0.0) discard;
+        baseAlpha = cov;
+    }
+    else if (alphaMode == 1u && baseAlpha < refValue)
+    {
+        discard;
+    }
+
+    if (family == kFamilyShadow)
+    {
+        outColor = vec4(0.0, 0.0, 0.0, baseAlpha);
+        return;
     }
     else if (family == kFamilyGrass)
     {
@@ -252,7 +257,7 @@ void main()
     // Cascade shadow map lookup
     // -----------------------------------------------------------------------
     uint fogMode = hasDraw ? drawConstants.draws[drawIdx].fog : 0u;
-    if (family != kFamilyFlat && family != kFamilyWater && frame.shadowCtl.x > 0.5)
+    if (family != kFamilyFlat && family != kFamilyWater && fogMode == kFogEnabled && frame.shadowCtl.x > 0.5)
     {
         int nC = int(frame.cascadeCtl.x);
         int omniN = int(frame.cascadeCtl.w);
@@ -270,7 +275,7 @@ void main()
             float ts = frame.shadowCtl.w;
             float prevEdge = (ci > 0) ? frame.cascadeSplits[ci - 1] : 0.0;
             float ciMetric = (ci < omniN) ? dist3D : eyeDepth;
-            float band = (frame.cascadeSplits[ci] - prevEdge) * 0.40;
+            float band = (frame.cascadeSplits[ci] - prevEdge) * 0.15;
             float bw = (ci + 1 < nC) ? clamp((ciMetric - (frame.cascadeSplits[ci] - band)) / max(band, 0.001), 0.0, 1.0) : 0.0;
             float litSum = 0.0;
             float wSum = 0.0;
@@ -305,16 +310,21 @@ void main()
         }
     }
 
-    // Match GL33's dusk scotopic adjustment. Active NVG suppresses this on
-    // the CPU before the intensity reaches the frame constants.
-    float luminance = clamp(dot(baseColor, vec3(0.2, 0.9, 0.4)), 0.0, 1.0);
-    float nightBlend = clamp(luminance + (1.0 - frame.lightingParams.w), 0.0, 1.0);
-    baseColor = mix(vec3(luminance), baseColor, nightBlend);
+    // Match GL33's dusk scotopic adjustment. It applies to normal/detail
+    // materials only; active NVG suppresses it on the CPU.
+    if (family == kFamilyNormal || family == kFamilyDetail)
+    {
+        float luminance = clamp(dot(baseColor, vec3(0.2, 0.9, 0.4)), 0.0, 1.0);
+        float nightBlend = clamp(luminance + (1.0 - frame.lightingParams.w), 0.0, 1.0);
+        baseColor = mix(vec3(luminance), baseColor, nightBlend);
+    }
 
     // -----------------------------------------------------------------------
     // Fog: vFogFactor=1 near (no fog), 0 far (full fog).
     // -----------------------------------------------------------------------
     vec3 fogged = mix(frame.fogColor.rgb, baseColor, vFogFactor);
+    float luma = dot(fogged, vec3(0.2126, 0.7152, 0.0722));
+    fogged = mix(vec3(luma), fogged, 1.08);
     // Partial gamma boost to compensate for UNORM swapchain (no hardware sRGB encode).
     // pow(x, 1/1.5) is between no boost (too dark) and full sRGB (washed out).
     fogged = pow(fogged, vec3(1.0 / 1.5));

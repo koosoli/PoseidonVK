@@ -35,7 +35,7 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
 } frame;
 
 // Per-draw constants uploaded by the host from the backend-neutral frame plan.
-// Mirrors the C++ Poseidon::vk::DrawConstantsVK layout (std430, 160 bytes).
+// Mirrors the C++ Poseidon::vk::DrawConstantsVK layout (std430, 176 bytes).
 struct DrawConstants
 {
     mat4 world;
@@ -59,6 +59,7 @@ struct DrawConstants
     uint alphaRef;
     uint stencilExclusion;
     uint reserved[2];
+    vec4 tint;
 };
 
 layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer
@@ -132,5 +133,5 @@ void main()
     // and fade smoothly near the far edge. Matches the visibility boost from the wgpu fork.
     float u = clamp(dist / max(frame.fogParams.y, 1.0), 0.0, 1.0);
     float fogFactor = 1.0 - pow(u, 3.0);
-    vFogFactor = (fogMode == 1u) ? 1.0 : ((frame.fogParams.w > 0.5) ? fogFactor : 1.0);
+    vFogFactor = (fogMode == 0u && frame.fogParams.w > 0.5) ? fogFactor : 1.0;
 }
