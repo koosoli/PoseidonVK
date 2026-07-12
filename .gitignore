@@ -77,5 +77,6 @@ target/
 !resources/**/*.png
 !docs/**/*.png
 !Screenshots/1.png
+!Screenshots/2.png
 !tests/missions/screenshot/**/*.bmp
 !tests/missions/screenshot/**/*.png
