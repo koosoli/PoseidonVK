@@ -84,6 +84,7 @@ struct SceneInputs
     // sequence emitted by BuildFrame.
     std::vector<SceneDraw> shadowDraws;
     std::vector<SceneDraw> skyDraws;
+    std::vector<SceneDraw> terrainOpaqueDraws;
     std::vector<SceneDraw> worldOpaqueDraws;
     std::vector<SceneDraw> worldCutoutDraws;
     std::vector<SceneDraw> surfaceOverlayDraws;

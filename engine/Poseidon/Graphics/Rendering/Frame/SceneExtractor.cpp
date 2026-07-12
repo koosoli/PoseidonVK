@@ -262,6 +262,9 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
                 case render::PassKind::Sky:
                     passId = PassId::Sky;
                     break;
+                case render::PassKind::TerrainOpaque:
+                    s.terrainOpaqueDraws.push_back(std::move(d));
+                    continue;
                 case render::PassKind::WorldOpaque:
                     passId = PassId::Opaque;
                     break;

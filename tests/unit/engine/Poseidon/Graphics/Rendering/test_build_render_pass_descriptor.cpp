@@ -278,6 +278,16 @@ TEST_CASE("BuildRenderPassDescriptor: multitexturing detail / grass", "[build-de
     }
 }
 
+TEST_CASE("BuildRenderPassDescriptor: terrain hint routes opaque ground", "[build-descriptor][phase2]")
+{
+    BuildContext ctx;
+    ctx.passKindHint = PassKindHint::Terrain;
+
+    const RenderPassDescriptor d = buildFromInt(0, ctx);
+    REQUIRE(d.pass == PassKind::TerrainOpaque);
+    REQUIRE(d.shader == ShaderFamily::Normal);
+}
+
 TEST_CASE("BuildRenderPassDescriptor: in-2D pass drops Water texGen", "[build-descriptor][phase2]")
 {
     BuildContext ctx;

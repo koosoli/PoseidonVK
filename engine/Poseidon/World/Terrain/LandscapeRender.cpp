@@ -1338,7 +1338,11 @@ void Landscape::DrawGround(const LandBegEnd& bigRect, Scene& scene, const Ground
                             animLand.SetBrigth(layer.bright);
                         }
 #if 1
+                        const render::PassKindHint previousPassHint = GEngine->GetPassKindHint();
+                        if (!layer.isAlpha)
+                            GEngine->SetPassKindHint(render::PassKindHint::Terrain);
                         shape->Draw(anim, lights, ClipAll, 0, trans, iTrans);
+                        GEngine->SetPassKindHint(previousPassHint);
 #endif
                         if (layer.isAlpha)
                         {

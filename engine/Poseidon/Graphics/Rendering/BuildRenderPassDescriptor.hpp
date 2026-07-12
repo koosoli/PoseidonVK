@@ -140,6 +140,7 @@ inline RenderPassDescriptor BuildRenderPassDescriptor(const LegacySpec& spec, co
 
         const bool routeAsCockpit = (ctx.passKindHint == PassKindHint::Cockpit);
         const bool routeAsScreenSpace = (ctx.passKindHint == PassKindHint::ScreenSpace3D);
+        const bool routeAsTerrain = (ctx.passKindHint == PassKindHint::Terrain);
 
         if (Has(backend, Backend::IsAlpha))
         {
@@ -165,8 +166,9 @@ inline RenderPassDescriptor BuildRenderPassDescriptor(const LegacySpec& spec, co
             d.alpha = AlphaMode::Disabled;
             d.alphaRef = 0xc0;
             d.pass = routeAsScreenSpace ? PassKind::ScreenSpace3D
-                     : routeAsCockpit   ? PassKind::CockpitOpaque
-                                        : PassKind::WorldOpaque;
+                      : routeAsCockpit   ? PassKind::CockpitOpaque
+                      : routeAsTerrain   ? PassKind::TerrainOpaque
+                                         : PassKind::WorldOpaque;
         }
 
         // Multitexturing shader family + texGen — only for the generic
@@ -202,7 +204,7 @@ inline RenderPassDescriptor BuildRenderPassDescriptor(const LegacySpec& spec, co
     {
         d.fog = FogMode::Disabled;
         d.cull = CullMode::None;
-        if (Has(backend, Backend::IsAlphaFog))
+        if (Has(backend, Backend::IsAlphaFog) && d.pass != PassKind::WorldLight)
             d.pass = PassKind::Sky;
     }
 

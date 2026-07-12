@@ -97,6 +97,7 @@ Frame BuildFrame(const SceneInputs& s)
         tryEmit(FramePassKind::ShadowAccum, s.shadowDraws);
 
     tryEmit(FramePassKind::Sky, s.skyDraws);
+    tryEmit(FramePassKind::TerrainOpaque, s.terrainOpaqueDraws);
     tryEmit(FramePassKind::WorldOpaque, s.worldOpaqueDraws);
     tryEmit(FramePassKind::WorldCutout, s.worldCutoutDraws);
     tryEmit(FramePassKind::SurfaceOverlay, s.surfaceOverlayDraws);

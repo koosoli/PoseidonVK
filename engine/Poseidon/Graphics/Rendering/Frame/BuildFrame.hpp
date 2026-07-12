@@ -17,7 +17,7 @@
 //
 // Contract:
 //   - Output Frame's pass order matches the canonical sequence
-//     ShadowAccum → ShadowDarken → Sky → WorldOpaque → WorldCutout
+//     ShadowAccum → ShadowDarken → Sky → TerrainOpaque → WorldOpaque → WorldCutout
 //     → Water → WorldTransparent → Cockpit → ScreenSpace.
 //   - Empty passes are *omitted* (no zero-draw Pass entries),
 //     so ValidateFrame's pass-ordering check stays linear.

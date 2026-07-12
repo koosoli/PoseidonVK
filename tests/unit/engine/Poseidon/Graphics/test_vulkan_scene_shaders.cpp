@@ -189,6 +189,15 @@ TEST_CASE("Vulkan scene fragment shader drives sun lighting from frame constants
     CHECK(fragmentSource.find("* sunOn") != std::string::npos);
 }
 
+TEST_CASE("Vulkan scene fragment shader refines terrain normals", "[vulkan][scene-shaders]")
+{
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const std::string fragmentSource = ReadTextFile(shaderDir / "scene.frag.glsl");
+
+    CHECK(fragmentSource.find("kPassTerrainOpaque = 12u") != std::string::npos);
+    CHECK(fragmentSource.find("cross(dFdx(vWorldPos), dFdy(vWorldPos))") != std::string::npos);
+}
+
 TEST_CASE("Vulkan scene fragment shader consumes uploaded local lights", "[vulkan][scene-shaders]")
 {
     const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";

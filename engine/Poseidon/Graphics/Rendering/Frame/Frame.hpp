@@ -143,6 +143,7 @@ enum class FramePassKind : std::uint8_t
     ShadowAccum,  // stencil-only shadow caster pass
     ShadowDarken, // fullscreen darken quad (consumes shadow stencil)
     Sky,          // sky dome / clouds — drawn first, no z-write
+    TerrainOpaque,
     WorldOpaque,
     WorldCutout,
     SurfaceOverlay, // roads / decals (OnSurface) — after terrain
@@ -164,6 +165,8 @@ inline const char* FramePassKindName(FramePassKind k) noexcept
             return "ShadowDarken";
         case FramePassKind::Sky:
             return "Sky";
+        case FramePassKind::TerrainOpaque:
+            return "TerrainOpaque";
         case FramePassKind::WorldOpaque:
             return "WorldOpaque";
         case FramePassKind::WorldCutout:

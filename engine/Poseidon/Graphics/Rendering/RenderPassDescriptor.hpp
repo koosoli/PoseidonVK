@@ -41,6 +41,7 @@ enum class PassKind : std::uint8_t
     CockpitTransparent, // Pass 3: late transparent cockpit meshes.
     ScreenSpace3D,      // TL / post-world 3D overlay-like meshes (HUD, notebook).
     Sky,                // Sky dome: camera-centered, no-depth, user-plane clipped.
+    TerrainOpaque,      // Opaque landscape ground; rendered before regular world geometry.
 };
 
 // Explicit cockpit / first-person routing.  Producers wrap cockpit / overlay
@@ -54,8 +55,9 @@ enum class PassKindHint : std::uint8_t
                    // draw"; descriptor picks
                    // CockpitOpaque/Cutout/Transparent based on alpha state.
     ScreenSpace3D, // Producer says "this is a 3D-mesh UI overlay"
-                   // (notebook, HUD geometry); routes as ScreenSpace3D
-                   // regardless of alpha.
+                    // (notebook, HUD geometry); routes as ScreenSpace3D
+                    // regardless of alpha.
+    Terrain,       // Producer says "this is opaque landscape ground".
 };
 
 // Depth test + write + stencil interaction.  Names align with the

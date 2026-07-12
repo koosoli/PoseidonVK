@@ -79,6 +79,7 @@ const uint kFamilyWater   = 2u;
 const uint kFamilyDetail  = 3u;
 const uint kFamilyGrass   = 4u;
 const uint kFamilyFlat    = 5u;
+const uint kPassTerrainOpaque = 12u;
 const uint kLightingLit         = 0u;
 const uint kLightingSunDisabled = 1u;
 const uint kFogEnabled          = 0u;
@@ -93,6 +94,7 @@ void main()
     uint alphaMode = hasDraw ? drawConstants.draws[drawIdx].alpha    : 0u;
     uint alphaRef  = hasDraw ? drawConstants.draws[drawIdx].alphaRef : 0u;
     uint family    = hasDraw ? drawConstants.draws[drawIdx].shader   : kFamilyNormal;
+    uint pass      = hasDraw ? drawConstants.draws[drawIdx].pass     : 0u;
 
     // -----------------------------------------------------------------------
     // Directional (sun) + local lighting
@@ -108,7 +110,16 @@ void main()
         vec3 rawSunDir = frame.sunDirection.xyz;
         vec3 sunDir    = length(rawSunDir) > 0.0001f ? normalize(rawSunDir) : vec3(0.0f, -1.0f, 0.0f);
         float sunOn = (lighting == kLightingLit && frame.lightingParams.x > 0.5) ? 1.0 : 0.0;
-        vec3 normal    = normalize(vWorldNormal);
+        vec3 normal = normalize(vWorldNormal);
+        if (pass == kPassTerrainOpaque)
+        {
+            // Preserve the legacy segment mesh while restoring some local
+            // terrain relief from the actual rasterized heightfield surface.
+            vec3 geometricNormal = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+            if (dot(geometricNormal, normal) < 0.0)
+                geometricNormal = -geometricNormal;
+            normal = normalize(mix(normal, geometricNormal, 0.35));
+        }
         float diffuse  = max(dot(normal, -sunDir), 0.0f) * sunOn;
         float ambient  = 0.35f;
         light          = vec3(ambient + diffuse * 0.65f);
