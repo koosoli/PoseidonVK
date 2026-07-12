@@ -194,26 +194,6 @@ void main()
         baseAlpha = c0.a;
     }
 
-    baseColor *= tint.rgb;
-    baseAlpha *= tint.a;
-
-    float refValue = float(alphaRef) / 255.0;
-    if (alphaMode == 3u) // TestAndBlend — coverage-AA discard
-    {
-        float cov = clamp((baseAlpha - refValue) / max(fwidth(baseAlpha), 1e-4) + 0.5, 0.0, 1.0);
-        if (cov <= 0.0) discard;
-        baseAlpha = cov;
-    }
-    else if (alphaMode == 1u && baseAlpha < refValue)
-    {
-        discard;
-    }
-
-    if (family == kFamilyShadow)
-    {
-        outColor = vec4(0.0, 0.0, 0.0, baseAlpha);
-        return;
-    }
     else if (family == kFamilyGrass)
     {
         // Grass: rgb = lit base modulated by tex1.rgb * 2.
@@ -251,6 +231,27 @@ void main()
             baseColor += frame.specularColor.rgb * pow(NdotH, specPow);
         }
         baseAlpha = c0.a;
+    }
+
+    baseColor *= tint.rgb;
+    baseAlpha *= tint.a;
+
+    float refValue = float(alphaRef) / 255.0;
+    if (alphaMode == 3u) // TestAndBlend — coverage-AA discard
+    {
+        float cov = clamp((baseAlpha - refValue) / max(fwidth(baseAlpha), 1e-4) + 0.5, 0.0, 1.0);
+        if (cov <= 0.0) discard;
+        baseAlpha = cov;
+    }
+    else if (alphaMode == 1u && baseAlpha < refValue)
+    {
+        discard;
+    }
+
+    if (family == kFamilyShadow)
+    {
+        outColor = vec4(0.0, 0.0, 0.0, baseAlpha);
+        return;
     }
 
     // -----------------------------------------------------------------------

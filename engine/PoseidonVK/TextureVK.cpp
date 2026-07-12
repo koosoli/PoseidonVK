@@ -571,18 +571,16 @@ bool TextureVK::UploadMips()
         srcH = dstH;
     }
 
-    // Transition file mips (TRANSFER_SRC) and generated mips (TRANSFER_DST) to SHADER_READ_ONLY
+    // Every level except the final generated one was used as a blit source.
+    // The final level remains TRANSFER_DST because nothing consumes it as a source.
     imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                 0, fileMipCount,
+                 0, fullMipCount - 1,
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (fullMipCount > fileMipCount)
-    {
-        imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                     fileMipCount, fullMipCount - fileMipCount,
-                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
+    imageBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                 fullMipCount - 1, 1,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     vkEndCommandBuffer(cb);
 

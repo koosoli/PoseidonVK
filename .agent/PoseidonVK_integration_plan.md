@@ -6,9 +6,10 @@ This is the implementation plan for modernizing CWR-CE while preserving every
 feature of the original game. It prioritizes verified parity, measurable
 performance, maintainable direct Vulkan code, and additive modern features.
 
-This document supersedes earlier feature inventories that described reference
-code as directly portable. Reference projects are valuable design inputs, but
-their code, licensing, maturity, and hardware assumptions vary substantially.
+This document supersedes earlier feature inventories that treated every
+reference component as drop-in code. Reference projects are valuable design
+inputs and, where licensing has been approved, targeted implementation sources;
+their maturity, coupling, and hardware assumptions still vary substantially.
 
 ## Non-Negotiable Rules
 
@@ -18,8 +19,9 @@ their code, licensing, maturity, and hardware assumptions vary substantially.
    parity is proven by representative automated and manual comparisons.
 3. Keep shared `engine/Poseidon/` backend-neutral. Backend code owns Vulkan
    handles, synchronization, resources, and Vulkan-only optimizations.
-4. Retain the GPL-3.0-or-later licensing model. Do not copy AGPL reference
-   code into this project without an explicit licensing decision and review.
+4. FP_269 reuse is approved by project licensing policy. Preserve each reused
+   file's notices, record its source path and commit, and meet all applicable
+   redistribution obligations when adapting code.
 5. Treat hardware capabilities as tiers. Advanced hardware must enhance the
    renderer, never gate legacy-game rendering or gameplay.
 6. Mark roadmap work complete only after its build, unit/contract tests, and
@@ -77,17 +79,20 @@ port without verifying the exact source and commit.
 
 ### FP_269_vk_WIP
 
-**Role:** Behavioral and algorithmic reference only.
+**Role:** Targeted implementation, behavioral, and algorithmic reference.
 
-- Much of the renderer and tools carry `AGPL-3.0-or-later` SPDX headers and
-  depend on FP-specific GPU abstractions, assets, formats, mesh shaders, sparse
-  resources, and global state.
-- Reimplement techniques from independent specifications, public papers, and
-  vendor samples. Do not treat FP source as drop-in code.
-- FSR 1 can be integrated from AMD's own appropriately licensed source, with
-  its required notices, after the HDR/post-process foundation exists.
+- FP reuse is approved, including code carrying `AGPL-3.0-or-later` SPDX
+  headers, subject to the project licensing decision and retained notices.
+- Port narrow, independently understood components rather than importing FP's
+  renderer wholesale. It depends on FP-specific GPU abstractions, assets,
+  formats, mesh shaders, sparse resources, and global state.
+- Adapt imported code to PoseidonVK's FramePlan, resource ownership, error
+  handling, C++ style, and capability tiers. A licensed component can still be
+  architecturally unsuitable as a drop-in dependency.
+- FSR 1 can come from FP or AMD's original source after the HDR/post-process
+  foundation exists; retain the applicable notices either way.
 - Audit every third-party utility, shader include, generated star catalog, and
-  asset separately before use.
+  asset separately before use, even when the enclosing FP source is approved.
 
 ### Binary Swimming Addon
 
