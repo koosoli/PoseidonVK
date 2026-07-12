@@ -14,6 +14,8 @@
 #include <Poseidon/Graphics/Textures/PAADecoder.hpp>
 #include <Poseidon/IO/FileServer.hpp>
 #include <Poseidon/Core/Global.hpp>
+#include <Poseidon/Core/Config/EngineConfig.hpp>
+#include <Poseidon/IO/Streams/QBStream.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -170,6 +172,15 @@ bool TextureVK::Init(RStringB name)
 
     _w = _mipmaps[0]._w;
     _h = _mipmaps[0]._h;
+
+    if (!CmpStartStr(Name(), "fonts\\"))
+        _maxSize = 1024;
+    else if (!CmpStartStr(Name(), "merged\\"))
+        _maxSize = 2048;
+    else if (AbstractTextBank::AnimatedNumber(Name()) >= 0 && IsAlpha())
+        _maxSize = ENGINE_CONFIG.maxAnimText;
+    else
+        _maxSize = ENGINE_CONFIG.maxObjText;
 
     // Compute the decode-target format from the source format, then initialise
     // _dFormat on every mip.  This mirrors TextureGL33_Init.cpp lines 233-246:
