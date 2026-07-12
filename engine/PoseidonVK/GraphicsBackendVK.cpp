@@ -84,10 +84,9 @@ VulkanProbeResult ProbeVulkan()
         probe.reason = "vkEnumerateInstanceVersion failed: " + VkResultName(result);
         return probe;
     }
-    if (probe.apiVersion < VK_API_VERSION_1_1)
+    if (probe.apiVersion < VK_API_VERSION_1_3)
     {
-        probe.reason = "Vulkan 1.1 is required for the scene viewport convention; loader reports " +
-                       VersionString(probe.apiVersion);
+        probe.reason = "Vulkan 1.3 is required; loader reports " + VersionString(probe.apiVersion);
         return probe;
     }
 
@@ -104,7 +103,7 @@ VulkanProbeResult ProbeVulkan()
     appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
     appInfo.pEngineName = "PoseidonVK";
     appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_1;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo instanceInfo{};
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -146,7 +145,7 @@ VulkanProbeResult ProbeVulkan()
     {
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(device, &properties);
-        if (properties.apiVersion >= VK_API_VERSION_1_1)
+        if (properties.apiVersion >= VK_API_VERSION_1_3)
         {
             hasVulkan11Device = true;
             break;
@@ -155,7 +154,7 @@ VulkanProbeResult ProbeVulkan()
     vkDestroyInstance(instance, nullptr);
     if (!hasVulkan11Device)
     {
-        probe.reason = "no Vulkan 1.1 physical devices reported by the loader";
+        probe.reason = "no Vulkan 1.3 physical devices reported by the loader";
         return probe;
     }
 

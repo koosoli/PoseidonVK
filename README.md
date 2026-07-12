@@ -21,11 +21,11 @@ This project is not an official Bohemia Interactive product.
 
 ## Current Preview
 
-![PoseidonVK GL33 smoke-test screenshot showing in-game soldiers and terrain](Screenshots/1.png)
+![PoseidonVK Vulkan 1.3 smoke-test screenshot showing in-game terrain, vehicles, and HUD](Screenshots/2.png)
 
-Current GL33 smoke-test screenshot using separate demo game data. The Vulkan
-backend is in active bootstrap/raster-parity work and does not render the full
-game scene yet.
+Current Vulkan 1.3 smoke-test screenshot using separate demo game data. The
+Vulkan backend is in active raster-parity work and can render the full game
+scene with known gaps (see Phase 2 below).
 
 ## Modernization Goals
 
@@ -299,8 +299,21 @@ For local smoke testing in this fork, the demo executable is usually the safest
 target:
 
 ```sh
-cmake --build build/codex-vk-dbg --target PoseidonGameDemo --config Debug
+cmake --build build/win-x64-clang-rwdi --target PoseidonGameDemo
 ```
+
+### Running The Vulkan Backend
+
+After building, copy `PoseidonGameDemo.exe` into the Steam demo installation
+folder and launch with the Vulkan renderer:
+
+```sh
+cd "D:\SteamLibrary\steamapps\common\Arma Cold War Assault Demo"
+PoseidonGameDemo.exe --render vulkan --window
+```
+
+The `--render` flag selects the backend (`auto`, `gl33`, or `vulkan`).
+The `--window` flag starts in windowed mode.
 
 ### Smoke Testing
 

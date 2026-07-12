@@ -585,7 +585,7 @@ bool EngineVK::CreateInstance()
     appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
     // Scene rasterization uses a negative viewport height to preserve the
     // engine's OpenGL Y convention. That is core functionality in Vulkan 1.1.
-    appInfo.apiVersion = VK_API_VERSION_1_1;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -665,9 +665,9 @@ bool EngineVK::PickPhysicalDevice()
     {
         VkPhysicalDeviceProperties props{};
         vkGetPhysicalDeviceProperties(device, &props);
-        if (props.apiVersion < VK_API_VERSION_1_1)
+        if (props.apiVersion < VK_API_VERSION_1_3)
         {
-            LOG_DEBUG(Graphics, "Vulkan: skipping device '{}' (requires Vulkan 1.1, found {}.{}.{})", props.deviceName,
+            LOG_DEBUG(Graphics, "Vulkan: skipping device '{}' (requires Vulkan 1.3, found {}.{}.{})", props.deviceName,
                       VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion),
                       VK_VERSION_PATCH(props.apiVersion));
             continue;
