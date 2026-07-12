@@ -87,10 +87,10 @@ public:
               VkPipelineLayout layout,
               VkShaderModule vertModule,
               VkShaderModule fragModule,
-              VkPipelineVertexInputStateCreateInfo vertexInput,
-              VkPipelineInputAssemblyStateCreateInfo inputAssembly,
-              VkPipelineViewportStateCreateInfo viewportState,
-              VkPipelineMultisampleStateCreateInfo multisampling)
+               VkPipelineVertexInputStateCreateInfo vertexInput,
+               VkPipelineInputAssemblyStateCreateInfo inputAssembly,
+               VkPipelineViewportStateCreateInfo viewportState,
+               VkPipelineMultisampleStateCreateInfo multisampling)
     {
         _device        = device;
         _renderPass    = renderPass;

@@ -1871,7 +1871,7 @@ bool EngineVK::CreateScenePipeline()
 
     // Initialise the pipeline cache with the fixed state shared across all variants.
     _scenePipelineCache.Init(_device, _renderPass, _scenePipelineLayout, _sceneVertexModule, _sceneFragmentModule,
-                             vertexInput, inputAssembly, viewportState, multisampling);
+                              vertexInput, inputAssembly, viewportState, multisampling);
 
     LOG_INFO(Graphics, "Vulkan: scene pipeline created");
     return true;
