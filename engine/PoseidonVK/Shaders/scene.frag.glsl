@@ -76,7 +76,10 @@ const uint kFamilyWater   = 2u;
 const uint kFamilyDetail  = 3u;
 const uint kFamilyGrass   = 4u;
 const uint kFamilyFlat    = 5u;
-const uint kPassSky       = 10u;
+const uint kPassSky       = 11u;
+const uint kLightingLit         = 0u;
+const uint kLightingSunDisabled = 1u;
+const uint kFogEnabled          = 0u;
 
 void main()
 {
@@ -91,17 +94,18 @@ void main()
 
     // -----------------------------------------------------------------------
     // Directional (sun) + local lighting
-    // Only applied when DrawConstants.lighting != 0. Unlit draws (HUD markers,
-    // flat-shaded icons, kFamilyFlat) get full-bright light = vec3(1.0).
+    // Lit and sun-disabled draws receive positioned lights. Only fully lit
+    // draws receive directional sun lighting; unlit draws stay full-bright.
     // -----------------------------------------------------------------------
-    bool litDraw = hasDraw && (drawConstants.draws[drawIdx].lighting != 0u);
-    vec3 light   = vec3(1.0f); // default: unlit / full-bright
+    uint lighting = hasDraw ? drawConstants.draws[drawIdx].lighting : kLightingLit;
+    bool litDraw = hasDraw && (lighting == kLightingLit || lighting == kLightingSunDisabled);
+    vec3 light = vec3(1.0f); // default: unlit / full-bright
 
     if (litDraw)
     {
         vec3 rawSunDir = frame.sunDirection.xyz;
         vec3 sunDir    = length(rawSunDir) > 0.0001f ? normalize(rawSunDir) : vec3(0.0f, -1.0f, 0.0f);
-        float sunOn    = (frame.lightingParams.x > 0.5) ? 1.0 : 0.0;
+        float sunOn = (lighting == kLightingLit && frame.lightingParams.x > 0.5) ? 1.0 : 0.0;
         vec3 normal    = normalize(vWorldNormal);
         float diffuse  = max(dot(normal, -sunDir), 0.0f) * sunOn;
         float ambient  = 0.35f;
@@ -229,7 +233,8 @@ void main()
     // -----------------------------------------------------------------------
     // Cascade shadow map lookup
     // -----------------------------------------------------------------------
-    if (family != kFamilyFlat && family != kFamilyWater && frame.shadowCtl.x > 0.5)
+    uint fogMode = hasDraw ? drawConstants.draws[drawIdx].fog : 0u;
+    if (fogMode == kFogEnabled && family != kFamilyFlat && family != kFamilyWater && frame.shadowCtl.x > 0.5)
     {
         int nC = int(frame.cascadeCtl.x);
         int omniN = int(frame.cascadeCtl.w);

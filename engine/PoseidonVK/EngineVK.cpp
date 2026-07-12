@@ -575,7 +575,9 @@ bool EngineVK::CreateInstance()
     appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
     appInfo.pEngineName = "PoseidonVK";
     appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    // Scene rasterization uses a negative viewport height to preserve the
+    // engine's OpenGL Y convention. That is core functionality in Vulkan 1.1.
+    appInfo.apiVersion = VK_API_VERSION_1_1;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -653,6 +655,16 @@ bool EngineVK::PickPhysicalDevice()
 
     for (VkPhysicalDevice device : devices)
     {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(device, &props);
+        if (props.apiVersion < VK_API_VERSION_1_1)
+        {
+            LOG_DEBUG(Graphics, "Vulkan: skipping device '{}' (requires Vulkan 1.1, found {}.{}.{})", props.deviceName,
+                      VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion),
+                      VK_VERSION_PATCH(props.apiVersion));
+            continue;
+        }
+
         if (!HasDeviceExtension(device, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
             continue;
 
@@ -684,8 +696,6 @@ bool EngineVK::PickPhysicalDevice()
         _graphicsQueueFamily = graphicsFamily;
         _presentQueueFamily = presentFamily;
 
-        VkPhysicalDeviceProperties props{};
-        vkGetPhysicalDeviceProperties(device, &props);
         LOG_INFO(Graphics, "Vulkan: selected device '{}'", props.deviceName);
         return true;
     }
@@ -2294,9 +2304,11 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 ++s_loggedDrawIdx;
                 if (logThis)
                 {
-                    LOG_DEBUG(Graphics, "SceneDraw[{}]: pass={} meshId={} tex0={} idxRange={}+{}",
+                    LOG_DEBUG(Graphics, "SceneDraw[{}]: pass={} meshId={} tex0={} idxRange={}+{}"
+                              " cull={} frontFace={} depth={} blend={}",
                               s_loggedDrawIdx - 1, draw.pass, draw.meshId, draw.textureIds[0],
-                              draw.indexBegin, draw.indexCount);
+                              draw.indexBegin, draw.indexCount,
+                              draw.cull, draw.frontFace, draw.depth, draw.blend);
                 }
 
                 key.cull = static_cast<render::CullMode>(draw.cull);
@@ -2475,6 +2487,10 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
 
 void EngineVK::DestroySwapchain()
 {
+    // Cached pipelines reference the render pass destroyed below. They must be
+    // recreated for the new swapchain's render pass and viewport dimensions.
+    _scenePipelineCache.Destroy(_device);
+
     if (_scenePipeline)
     {
         vkDestroyPipeline(_device, _scenePipeline, nullptr);

@@ -202,6 +202,7 @@ void EngineGL33::ApplyPipeline(const Poseidon::render::RenderPassDescriptor& d)
 
     // -- Fog ------------------------------------------------------------
     SetShaderFogEnabled(d.fog == Poseidon::render::FogMode::Enabled);
+    SetShadowMapReceiverEnabled(d.fog == Poseidon::render::FogMode::Enabled);
 
     // -- Alpha test ----------------------------------------------------
     const bool alphaTest =

@@ -879,6 +879,16 @@ void EngineGL33::SetShaderFogEnabled(bool enabled)
     FlushVSConstants();
 }
 
+void EngineGL33::SetShadowMapReceiverEnabled(bool enabled)
+{
+    // Sky, cockpit, and screen-space draws use FogMode::Disabled and are not
+    // world-space shadow receivers. Keep the cascade data resident and only
+    // gate its lookup for the current draw.
+    const bool shadowMapsActive = _shadowTuning.enabled && _shadowMapActive && _shadowMapTex && _shadowCascades > 0;
+    s_psShadow[2 * 4] = enabled && shadowMapsActive ? 1.0f : 0.0f;
+    FlushPSConstants();
+}
+
 void EngineGL33::UploadFrameConstants(const FrameState& frame)
 {
     memcpy(s_vsShadow + VSConst::SlotProj * 4, reinterpret_cast<const float*>(&frame.projection), 4 * 16);

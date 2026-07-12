@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -83,6 +84,12 @@ VulkanProbeResult ProbeVulkan()
         probe.reason = "vkEnumerateInstanceVersion failed: " + VkResultName(result);
         return probe;
     }
+    if (probe.apiVersion < VK_API_VERSION_1_1)
+    {
+        probe.reason = "Vulkan 1.1 is required for the scene viewport convention; loader reports " +
+                       VersionString(probe.apiVersion);
+        return probe;
+    }
 
     result = vkEnumerateInstanceExtensionProperties(nullptr, &probe.instanceExtensionCount, nullptr);
     if (result != VK_SUCCESS)
@@ -97,7 +104,7 @@ VulkanProbeResult ProbeVulkan()
     appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
     appInfo.pEngineName = "PoseidonVK";
     appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = VK_API_VERSION_1_1;
 
     VkInstanceCreateInfo instanceInfo{};
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -112,16 +119,43 @@ VulkanProbeResult ProbeVulkan()
     }
 
     result = vkEnumeratePhysicalDevices(instance, &probe.physicalDeviceCount, nullptr);
-    vkDestroyInstance(instance, nullptr);
-
     if (result != VK_SUCCESS)
     {
+        vkDestroyInstance(instance, nullptr);
         probe.reason = "vkEnumeratePhysicalDevices failed: " + VkResultName(result);
         return probe;
     }
     if (probe.physicalDeviceCount == 0)
     {
+        vkDestroyInstance(instance, nullptr);
         probe.reason = "no Vulkan physical devices reported by the loader";
+        return probe;
+    }
+
+    std::vector<VkPhysicalDevice> devices(probe.physicalDeviceCount);
+    result = vkEnumeratePhysicalDevices(instance, &probe.physicalDeviceCount, devices.data());
+    if (result != VK_SUCCESS)
+    {
+        vkDestroyInstance(instance, nullptr);
+        probe.reason = "vkEnumeratePhysicalDevices failed: " + VkResultName(result);
+        return probe;
+    }
+
+    bool hasVulkan11Device = false;
+    for (VkPhysicalDevice device : devices)
+    {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(device, &properties);
+        if (properties.apiVersion >= VK_API_VERSION_1_1)
+        {
+            hasVulkan11Device = true;
+            break;
+        }
+    }
+    vkDestroyInstance(instance, nullptr);
+    if (!hasVulkan11Device)
+    {
+        probe.reason = "no Vulkan 1.1 physical devices reported by the loader";
         return probe;
     }
 

@@ -919,6 +919,7 @@ class EngineGL33 : public Engine
     void UploadVSLights(const LightList& lights, const Poseidon::TLMaterial& mat, float nightEffect);
     void UploadVSTexGenConstants(TexGenMode mode);
     void SetShaderFogEnabled(bool enabled);
+    void SetShadowMapReceiverEnabled(bool enabled);
 
     void UploadFrameConstants(const FrameState& frame);
     void UploadPassConstants(const PassState& pass);
