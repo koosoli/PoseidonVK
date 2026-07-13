@@ -134,6 +134,7 @@ class EngineVK : public EngineDummy
     bool CreateWorldCompositeDescriptorSet();
     bool CreateWorldCompositePipelineLayout();
     bool CreateWorldCompositePipeline();
+    bool WorldCompositionActive() const;
     VkFormat FindDepthFormat() const;
     bool CreateBootstrapPipeline();
     bool CreateScenePipeline();
@@ -287,6 +288,8 @@ class EngineVK : public EngineDummy
     bool _debugUtilsEnabled = false;
     bool _proceduralSkyEnabled = false;
     bool _volumetricCloudsEnabled = false;
+    bool _hdrEnabled = false;
+    float _hdrExposure = 1.0f;
     vk::FrameConstantsVK _lastFrameConstants = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
     std::vector<vk::SceneDrawCommandVK> _lastSceneDrawCommands;
