@@ -480,7 +480,6 @@ class EngineVK : public EngineDummy
     VkPipelineLayout _shadowAlphaPipelineLayout = VK_NULL_HANDLE;
     VkShaderModule _shadowAlphaVertexModule = VK_NULL_HANDLE;
     VkShaderModule _shadowAlphaFragmentModule = VK_NULL_HANDLE;
-    vk::BufferVK _shadowVertexBuffer;
     VkCommandBuffer _shadowCommandBuffer = VK_NULL_HANDLE;
     VkFence _shadowInFlight = VK_NULL_HANDLE;
     int _shadowMapRes = 0;
@@ -498,6 +497,7 @@ class EngineVK : public EngineDummy
     void DestroyShadowResources();
     void UpdateShadowFrameConstants();
     bool CreateShadowDepthPipeline();
+    void RenderShadowDepthFramePlan(const render::frame::Frame& frame);
     bool CompileShader(const char* source, int stage, std::vector<uint32_t>& spirv, std::string& error);
 
     friend class VertexBufferVK;

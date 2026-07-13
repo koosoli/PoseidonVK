@@ -11,8 +11,11 @@
 #include <PoseidonVK/EngineVK.hpp>
 #include <PoseidonVK/BufferVK.hpp>
 #include <PoseidonVK/DescriptorBindingsVK.hpp>
+#include <PoseidonVK/SceneDrawCommandsVK.hpp>
 #include <PoseidonVK/TextureVK.hpp>
+#include <PoseidonVK/VertexLayoutVK.hpp>
 #include <Poseidon/Foundation/Framework/Log.hpp>
+#include <Poseidon/Graphics/Shadow/ShadowMath.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -59,6 +62,20 @@ bool RecreateSignaledShadowFence(VkDevice device, VkFence& fence)
 // Shader sources embedded at compile time via GenerateShaderHeader.cmake
 namespace
 {
+struct ShadowPushConstantsVK
+{
+    float lightVP[16] = {};
+    // Affine scene transforms have a fixed final column.  Pack the three
+    // variable columns plus translation so CSM alpha cutoff still fits Vulkan's
+    // guaranteed 128-byte push-constant budget.
+    float worldColumns[3][4] = {};
+    float translation[3] = {};
+    float alphaCutoff = 0.5f;
+};
+
+static_assert(sizeof(ShadowPushConstantsVK) == sizeof(float) * 32,
+              "shadow push constants must match shadowDepth*.glsl");
+
 constexpr const char kShadowDepthVertSrc[] =
 #include <PoseidonVK/Shaders/shadowDepth.vert.glsl.hpp>
 ;
@@ -426,11 +443,13 @@ bool EngineVK::EnsureShadowResources(int res, int layers)
 
 bool EngineVK::CreateShadowDepthPipeline()
 {
-    // Push-constant: one mat4 (lightVP) = 64 bytes, vertex-stage only
+    // The shared caster contract supplies one camera-relative world transform
+    // per indexed mesh section.  Keep it adjacent to lightVP so depth shaders
+    // consume the original scene vertex buffers directly.
     VkPushConstantRange pcRange{};
-    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcRange.offset     = 0;
-    pcRange.size       = sizeof(float) * 16;
+    pcRange.size       = sizeof(ShadowPushConstantsVK);
 
     // --- Solid pipeline layout (no descriptor sets needed) ---
     {
@@ -539,18 +558,10 @@ bool EngineVK::CreateShadowDepthPipeline()
     vp.viewportCount = 1;
     vp.scissorCount  = 1;
 
-    // --- Solid pipeline: vec3 xyz only ---
+    // --- Solid pipeline: regular scene vertex position ---
     {
-        VkVertexInputBindingDescription bind{};
-        bind.binding   = 0;
-        bind.stride    = sizeof(float) * 3;
-        bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        VkVertexInputAttributeDescription attr{};
-        attr.binding  = 0;
-        attr.location = 0;
-        attr.format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attr.offset   = 0;
+        const VkVertexInputBindingDescription bind = vk::MakeSceneVertexBindingDescription();
+        const VkVertexInputAttributeDescription attr = vk::MakeSceneVertexPositionAttribute();
 
         VkPipelineVertexInputStateCreateInfo vi{};
         vi.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -590,24 +601,13 @@ bool EngineVK::CreateShadowDepthPipeline()
         }
     }
 
-    // --- Alpha pipeline: vec3 xyz + vec2 uv ---
+    // --- Alpha pipeline: regular scene position + UV ---
     {
         VkPipelineRasterizationStateCreateInfo alphaRs = rs;
         alphaRs.cullMode = VK_CULL_MODE_NONE;
-        VkVertexInputBindingDescription bind{};
-        bind.binding   = 0;
-        bind.stride    = sizeof(float) * 5;
-        bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        VkVertexInputAttributeDescription attrs[2]{};
-        attrs[0].binding  = 0;
-        attrs[0].location = 0;
-        attrs[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attrs[0].offset   = 0;
-        attrs[1].binding  = 0;
-        attrs[1].location = 1;
-        attrs[1].format   = VK_FORMAT_R32G32_SFLOAT;
-        attrs[1].offset   = sizeof(float) * 3;
+        const VkVertexInputBindingDescription bind = vk::MakeSceneVertexBindingDescription();
+        const VkVertexInputAttributeDescription attrs[2] = {
+            vk::MakeSceneVertexPositionAttribute(), vk::MakeSceneVertexTexcoordAttribute()};
 
         VkPipelineVertexInputStateCreateInfo vi{};
         vi.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -728,7 +728,6 @@ void EngineVK::DestroyShadowResources()
     }
 
     vk::DestroyImage(_device, _shadowDepthImage);
-    vk::DestroyBuffer(_device, _shadowVertexBuffer);
 
     _shadowMapRes    = 0;
     _shadowCascades  = 0;
@@ -737,9 +736,9 @@ void EngineVK::DestroyShadowResources()
 
 // ---------------------------------------------------------------------------
 // RenderShadowDepthScene
-// Called from the CPU-side scene pass (SceneShadowPass.cpp) before the main
-// frame CB is recorded.  We record + submit a one-shot CB so the depth map
-// is ready when the scene CB samples it.
+// The legacy CPU-flattened caster API is intentionally not consumed by
+// Vulkan.  Frame-plan consumers use RenderShadowDepthFramePlan below, which
+// binds the source mesh resources directly.  GL retains the historical API.
 // ---------------------------------------------------------------------------
 
 void EngineVK::RenderShadowDepthScene(
@@ -751,47 +750,54 @@ void EngineVK::RenderShadowDepthScene(
     int                    res,
     const ShadowCasterSet& casters)
 {
-    if (!_shadowTuning.enabled || !_device || !_commandPool || !_graphicsQueue)
+    (void)lightVPs;
+    (void)splitViewDist;
+    (void)camFwd3;
+    (void)numCascades;
+    (void)omniCount;
+    (void)res;
+    (void)casters;
+    _shadowMapActive = false;
+}
+
+void EngineVK::RenderShadowDepthFramePlan(const render::frame::Frame& frame)
+{
+    const render::frame::ShadowInput& input = frame.shadowInput;
+    _shadowSunFactor = input.sunFactor;
+    _shadowMapActive = false;
+    if (!_shadowTuning.enabled || !input.enabled || input.sunFactor <= 0.01f || !_device || !_commandPool ||
+        !_graphicsQueue)
+        return;
+
+    const std::vector<vk::ShadowDrawCommandVK> commands = vk::BuildShadowDrawCommands(input);
+    if (commands.empty())
         return;
 
     if (_shadowInFlight)
         vkWaitForFences(_device, 1, &_shadowInFlight, VK_TRUE, UINT64_MAX);
 
-    numCascades = std::min(numCascades, kShadowCascades);
-    if (numCascades <= 0)
+    namespace sm = Poseidon::shadow;
+    sm::CascadeBuildParams bp;
+    bp.camPos = {frame.cameraPosition[0], frame.cameraPosition[1], frame.cameraPosition[2]};
+    bp.forward = {input.camera.forward[0], input.camera.forward[1], input.camera.forward[2]};
+    bp.right = {input.camera.right[0], input.camera.right[1], input.camera.right[2]};
+    bp.up = {input.camera.up[0], input.camera.up[1], input.camera.up[2]};
+    bp.tanHalfX = input.camera.tanHalfX;
+    bp.tanHalfY = input.camera.tanHalfY;
+    bp.nearD = input.camera.nearDistance;
+    bp.farD = input.camera.farDistance;
+    bp.sunDir = {frame.sunDirection[0], frame.sunDirection[1], frame.sunDirection[2]};
+    bp.count = _shadowTuning.cascadeCount;
+    bp.distanceCoef = _shadowTuning.distanceCoef;
+    bp.splitCoef = _shadowTuning.splitCoef;
+    bp.resolution = _shadowTuning.resolution;
+    bp.zPad = 50.0f;
+    bp.omniCount = _shadowTuning.omniCount;
+    bp.omniCoef[0] = _shadowTuning.omniCoef0;
+    bp.omniCoef[1] = _shadowTuning.omniCoef1;
+    const sm::CascadeSet cascades = sm::BuildShadowCascadesTiered(bp);
+    if (cascades.count <= 0 || !EnsureShadowResources(_shadowTuning.resolution, cascades.count))
         return;
-
-    if (!EnsureShadowResources(res, numCascades))
-        return;
-
-    // --- Upload vertex data (solid then alpha) to host-visible buffer ---
-    const VkDeviceSize solidBytes = static_cast<VkDeviceSize>(casters.solidVertexCount) *
-                                    sizeof(float) * 3;
-    const VkDeviceSize alphaBytes = static_cast<VkDeviceSize>(casters.alphaVertexCount) *
-                                    sizeof(float) * 5;
-    const VkDeviceSize totalBytes = solidBytes + alphaBytes;
-
-    if (totalBytes > 0)
-    {
-        if (_shadowVertexBuffer.size < totalBytes)
-        {
-            vk::DestroyBuffer(_device, _shadowVertexBuffer);
-            const VkResult r = vk::CreateHostVisibleBuffer(
-                _physicalDevice, _device, totalBytes,
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, _shadowVertexBuffer);
-            if (r != VK_SUCCESS)
-            {
-                LOG_ERROR(Graphics, "VK shadow: vertex buffer alloc failed: {}", VkResultName(r));
-                return;
-            }
-        }
-
-        auto* dst = static_cast<uint8_t*>(_shadowVertexBuffer.mapped);
-        if (solidBytes > 0 && casters.solidXYZ)
-            std::memcpy(dst, casters.solidXYZ, solidBytes);
-        if (alphaBytes > 0 && casters.alphaXYZUV)
-            std::memcpy(dst + solidBytes, casters.alphaXYZUV, alphaBytes);
-    }
 
     // InitDraw has waited for the prior frame fence, so this buffer is no
     // longer in use. Submit it before the main frame on the same queue rather
@@ -815,7 +821,8 @@ void EngineVK::RenderShadowDepthScene(
     vkBeginCommandBuffer(cb, &bi);
 
     // --- One render pass per cascade ---
-    for (int c = 0; c < numCascades; ++c)
+    const int res = _shadowTuning.resolution;
+    for (int c = 0; c < cascades.count; ++c)
     {
         VkClearValue clearVal{};
         clearVal.depthStencil.depth   = 1.0f;
@@ -846,55 +853,54 @@ void EngineVK::RenderShadowDepthScene(
         scissor.extent = {static_cast<uint32_t>(res), static_cast<uint32_t>(res)};
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
-        const float* vp16 = lightVPs + c * 16;
-
-        // Solid casters
-        if (casters.solidVertexCount > 0 &&
-            _shadowDepthPipeline != VK_NULL_HANDLE &&
-            _shadowVertexBuffer.buffer != VK_NULL_HANDLE)
+        for (const vk::ShadowDrawCommandVK& command : commands)
         {
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowDepthPipeline);
-            vkCmdPushConstants(cb, _shadowDepthPipelineLayout,
-                               VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, vp16);
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cb, 0, 1, &_shadowVertexBuffer.buffer, &offset);
-            vkCmdDraw(cb, static_cast<uint32_t>(casters.solidVertexCount), 1, 0, 0);
-        }
+            const render::frame::ShadowCaster& caster = input.casters[command.casterIndex];
+            const vk::MeshResourcesVK* mesh = _meshRegistry.Resolve(command.meshId);
+            if (!mesh || !mesh->IsValid() || command.firstIndex >= mesh->indexCount)
+                continue;
+            const std::uint32_t indexCount = std::min(command.indexCount, mesh->indexCount - command.firstIndex);
+            if (indexCount == 0)
+                continue;
 
-        // Alpha-cutout casters
-        if (casters.alphaBatchCount > 0 &&
-            _shadowAlphaPipeline != VK_NULL_HANDLE &&
-            _shadowVertexBuffer.buffer != VK_NULL_HANDLE)
-        {
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowAlphaPipeline);
-            vkCmdPushConstants(cb, _shadowAlphaPipelineLayout,
-                               VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, vp16);
-            const VkDeviceSize alphaOff = solidBytes;
-            vkCmdBindVertexBuffers(cb, 0, 1, &_shadowVertexBuffer.buffer, &alphaOff);
+            ShadowPushConstantsVK constants;
+            std::memcpy(constants.lightVP, cascades.camRelVP[c].m.data(), sizeof(constants.lightVP));
+            std::memcpy(constants.worldColumns, &caster.world, sizeof(constants.worldColumns));
+            constants.translation[0] = caster.world._41;
+            constants.translation[1] = caster.world._42;
+            constants.translation[2] = caster.world._43;
+            constants.alphaCutoff = caster.alphaCutoff;
+            const VkDeviceSize vertexOffset = 0;
+            vkCmdBindVertexBuffers(cb, 0, 1, &mesh->vertexBuffer, &vertexOffset);
+            vkCmdBindIndexBuffer(cb, mesh->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-            for (int b = 0; b < casters.alphaBatchCount; ++b)
+            if (command.alphaMode == render::frame::ShadowCasterAlphaMode::Cutout &&
+                _shadowAlphaPipeline != VK_NULL_HANDLE)
             {
-                const ShadowCasterBatch& batch = casters.alphaBatches[b];
-                if (batch.vertexCount <= 0)
-                    continue;
-
-                // Bind the caster texture descriptor set
-                VkDescriptorSet texSet = VK_NULL_HANDLE;
-                if (batch.texture)
-                {
-                    const auto* tex = static_cast<const TextureVK*>(batch.texture);
-                    texSet = tex->GetDescriptorSet();
-                }
+                vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowAlphaPipeline);
+                vkCmdPushConstants(cb, _shadowAlphaPipelineLayout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(constants), &constants);
+                TextureVK* texture = ResolveTexture(caster.alphaTexture.id);
+                VkDescriptorSet texSet = texture ? texture->GetDescriptorSet() : VK_NULL_HANDLE;
                 if (texSet == VK_NULL_HANDLE && _fallbackWhiteTexture)
                     texSet = _fallbackWhiteTexture->GetDescriptorSet();
                 if (texSet != VK_NULL_HANDLE)
-                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            _shadowAlphaPipelineLayout, 0, 1,
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowAlphaPipelineLayout, 0, 1,
                                             &texSet, 0, nullptr);
-
-                vkCmdDraw(cb, static_cast<uint32_t>(batch.vertexCount), 1,
-                          static_cast<uint32_t>(batch.firstVertex), 0);
             }
+            else if (_shadowDepthPipeline != VK_NULL_HANDLE)
+            {
+                vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowDepthPipeline);
+                vkCmdPushConstants(cb, _shadowDepthPipelineLayout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(constants), &constants);
+            }
+            else
+            {
+                continue;
+            }
+            vkCmdDrawIndexed(cb, indexCount, 1, command.firstIndex, 0, 0);
         }
 
         vkCmdEndRenderPass(cb);
@@ -921,15 +927,15 @@ void EngineVK::RenderShadowDepthScene(
     }
 
     // Persist cascade data for UpdateShadowFrameConstants
-    _shadowCascades  = numCascades;
-    _shadowOmniCount = omniCount;
-    _shadowCamFwd[0] = camFwd3[0];
-    _shadowCamFwd[1] = camFwd3[1];
-    _shadowCamFwd[2] = camFwd3[2];
-    for (int c = 0; c < numCascades; ++c)
+    _shadowCascades  = cascades.count;
+    _shadowOmniCount = cascades.omniCount;
+    _shadowCamFwd[0] = input.camera.forward[0];
+    _shadowCamFwd[1] = input.camera.forward[1];
+    _shadowCamFwd[2] = input.camera.forward[2];
+    for (int c = 0; c < cascades.count; ++c)
     {
-        std::memcpy(_shadowMapVP + c * 16, lightVPs + c * 16, sizeof(float) * 16);
-        _shadowSplits[c] = splitViewDist[c];
+        std::memcpy(_shadowMapVP + c * 16, cascades.camRelVP[c].m.data(), sizeof(float) * 16);
+        _shadowSplits[c] = cascades.splitViewDist[c];
     }
     _shadowMapActive = true;
 }

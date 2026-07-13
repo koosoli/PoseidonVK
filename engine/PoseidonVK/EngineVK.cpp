@@ -488,6 +488,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
         _hdrEnabled = std::strcmp(value, "0") != 0;
     if (const char* value = std::getenv("POSEIDON_VK_TEMPORAL_EXPOSURE"))
         _temporalExposureEnabled = std::strcmp(value, "0") != 0;
+    if (const char* value = std::getenv("POSEIDON_VK_CSM"))
+        _shadowTuning.enabled = std::strcmp(value, "0") != 0;
 
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
@@ -616,6 +618,9 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
         LOG_INFO(Graphics, "Vulkan: temporal fixed-world volumetric clouds are enabled");
     if (_hdrEnabled)
         LOG_INFO(Graphics, "Vulkan: HDR world composition is enabled (R16G16B16A16_SFLOAT, exposure={})", _hdrExposure);
+    if (_shadowTuning.enabled)
+        LOG_INFO(Graphics, "Vulkan: cascaded shadow maps are enabled ({} cascades, {}x{})", _shadowTuning.cascadeCount,
+                 _shadowTuning.resolution, _shadowTuning.resolution);
 
     _textBank = new TextBankVK(*this);
 
@@ -673,6 +678,10 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
 
     _lastDrawConstants = vk::BuildDrawConstants(frame);
     _lastSceneDrawCommands = vk::BuildSceneDrawCommands(_lastDrawConstants);
+    // Submit CSM depth before the receiver command buffer is recorded.  The
+    // same-queue submission in EngineVK_Shadow establishes depth-write to
+    // fragment-sample visibility without a CPU queue drain.
+    RenderShadowDepthFramePlan(frame);
     for (auto& group : _sceneCommandGroups)
     {
         group.clear();

@@ -56,6 +56,7 @@ Frame BuildFrame(const SceneInputs& s)
     f.cameraPosition[0] = s.cameraPosition[0];
     f.cameraPosition[1] = s.cameraPosition[1];
     f.cameraPosition[2] = s.cameraPosition[2];
+    f.shadowInput = s.shadowInput;
     f.sunMatrix = s.sunMatrix;
     f.sunEnabled = s.sunEnabled;
     f.sunDirection[0] = s.sunDirection[0];
@@ -99,7 +100,17 @@ Frame BuildFrame(const SceneInputs& s)
         }
     };
 
-    // ShadowAccum — stencil-only caster pass.  Gated on
+    // ShadowDepth owns the cascade depth-array submission.  It carries no
+    // regular Draws because its casters have their own mesh/transform/alpha
+    // contract in Frame::shadowInput; do not let it clear the receiver target.
+    if (f.shadowInput.enabled && f.shadowInput.sunFactor > 0.01f && !f.shadowInput.casters.empty())
+    {
+        Pass shadowDepth;
+        shadowDepth.kind = FramePassKind::ShadowDepth;
+        f.passes.push_back(std::move(shadowDepth));
+    }
+
+    // ShadowAccum — legacy stencil-only caster pass.  Gated on
     // shadowsEnabled AND non-empty bucket so a forced-off frame
     // doesn't emit an empty pass.
     if (s.flags.shadowsEnabled)

@@ -150,6 +150,53 @@ struct Draw
     float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
+// A shadow caster deliberately references the same mesh allocation as its
+// receiver draw.  Shadow passes must not manufacture a second, CPU-flattened
+// copy of scene geometry: each backend resolves mesh.id to its existing GPU
+// vertex/index resources and applies this camera-relative transform.
+enum class ShadowCasterAlphaMode : std::uint8_t
+{
+    Opaque,
+    Cutout,
+};
+
+struct ShadowCaster
+{
+    MeshHandle mesh = {};
+    GfxMatrix world = {};
+    int indexBegin = 0;
+    int indexCount = 0;
+    ShadowCasterAlphaMode alphaMode = ShadowCasterAlphaMode::Opaque;
+    // Meaningful only for Cutout.  This is the material's primary alpha
+    // texture, not a backend texture pointer.
+    TextureHandle alphaTexture = {};
+    float alphaCutoff = 0.5f;
+};
+
+// Values required to fit the shared ShadowMath cascades.  The extractor
+// snapshots these from the live camera once; a backend never has to walk the
+// Scene graph while consuming an immutable Frame.
+struct ShadowCamera
+{
+    float forward[3] = {0.0f, 0.0f, 1.0f};
+    float right[3] = {1.0f, 0.0f, 0.0f};
+    float up[3] = {0.0f, 1.0f, 0.0f};
+    float tanHalfX = 1.0f;
+    float tanHalfY = 1.0f;
+    float nearDistance = 0.07f;
+    float farDistance = 1000.0f;
+};
+
+struct ShadowInput
+{
+    bool enabled = false;
+    // Daylight contribution.  Zero disables both the depth submission and
+    // receiver sampling, preventing stale cascades at night.
+    float sunFactor = 1.0f;
+    ShadowCamera camera = {};
+    std::vector<ShadowCaster> casters;
+};
+
 // Byte offset that glDrawElements' `indices` parameter expects (cast
 // to void* at the call site).  constexpr so the computation lives in
 // one tested place.  Pass indexSize explicitly (the engine's index
@@ -165,6 +212,7 @@ inline constexpr std::intptr_t ComputeIndexByteOffset(int firstIndex, std::size_
 
 enum class FramePassKind : std::uint8_t
 {
+    ShadowDepth,  // depth-array cascades; resources in Frame::shadowInput
     ShadowAccum,  // stencil-only shadow caster pass
     ShadowDarken, // fullscreen darken quad (consumes shadow stencil)
     Sky,          // sky dome / clouds — drawn first, no z-write
@@ -184,6 +232,8 @@ inline const char* FramePassKindName(FramePassKind k) noexcept
 {
     switch (k)
     {
+        case FramePassKind::ShadowDepth:
+            return "ShadowDepth";
         case FramePassKind::ShadowAccum:
             return "ShadowAccum";
         case FramePassKind::ShadowDarken:
@@ -226,6 +276,11 @@ struct Frame
     CameraView camera = {};
     float cameraPosition[3] = {0.0f, 0.0f, 0.0f};
     std::vector<Pass> passes;
+
+    // The backend-neutral CSM contract.  It owns the only Frame-level caster
+    // list and points at normal scene mesh resources; ShadowDepth is the
+    // scheduling marker in passes.
+    ShadowInput shadowInput = {};
 
     // Frame-global resources (lights, fog, sun) — separate struct
     // members, can't alias each other or the camera matrices.

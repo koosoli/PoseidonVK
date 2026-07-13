@@ -9,6 +9,7 @@
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
+#include <Poseidon/Core/Config/EngineConfig.hpp>
 #include <Poseidon/World/World.hpp>
 #include <algorithm>
 #include <array>
@@ -199,6 +200,53 @@ void bucketDraw(SceneInputs& s, PassId passId, SceneDraw&& draw)
     }
 }
 
+bool isShadowCaster(const DrawItem& item, const SceneDraw& draw)
+{
+    if (!item.isTLDraw || !draw.mesh.HasBackendMesh() || draw.indexCount <= 0)
+        return false;
+
+    using render::PassKind;
+    using render::Routing;
+    const Routing routing = item.specFlags.routing;
+    if (render::Has(routing, Routing::NoShadow) || render::Has(routing, Routing::ShadowDisabled) ||
+        render::Has(routing, Routing::IsHidden) || render::Has(routing, Routing::IsHiddenProxy))
+        return false;
+
+    // Receiver classes are also the capture-side caster classes.  Projected
+    // shadow polygons, transparent effects, sky, cockpit, and UI are never
+    // input to the cascade depth array.
+    switch (draw.descriptor.pass)
+    {
+        case PassKind::TerrainOpaque:
+        case PassKind::WorldOpaque:
+        case PassKind::WorldCutout:
+        case PassKind::SurfaceOverlay:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void appendShadowCaster(SceneInputs& s, const SceneDraw& draw)
+{
+    ShadowCaster caster;
+    caster.mesh = draw.mesh;
+    caster.world = draw.world;
+    caster.indexBegin = draw.indexBegin;
+    caster.indexCount = draw.indexCount;
+    const bool cutout = draw.descriptor.alpha == render::AlphaMode::Test ||
+                        draw.descriptor.alpha == render::AlphaMode::TestAndBlend;
+    // A cutout without an alpha texture cannot reproduce an alpha test.  Match
+    // the established GL collector's deterministic solid fallback.
+    if (cutout && draw.textures[0].id != 0)
+    {
+        caster.alphaMode = ShadowCasterAlphaMode::Cutout;
+        caster.alphaTexture = draw.textures[0];
+        caster.alphaCutoff = static_cast<float>(draw.descriptor.alphaRef) / 255.0f;
+    }
+    s.shadowInput.casters.push_back(caster);
+}
+
 } // namespace
 
 SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
@@ -212,6 +260,22 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
         s.cameraPosition[0] = position.X();
         s.cameraPosition[1] = position.Y();
         s.cameraPosition[2] = position.Z();
+        const Vector3 forward = camera->Direction();
+        const Vector3 right = camera->DirectionAside();
+        const Vector3 up = camera->DirectionUp();
+        s.shadowInput.camera.forward[0] = forward.X();
+        s.shadowInput.camera.forward[1] = forward.Y();
+        s.shadowInput.camera.forward[2] = forward.Z();
+        s.shadowInput.camera.right[0] = right.X();
+        s.shadowInput.camera.right[1] = right.Y();
+        s.shadowInput.camera.right[2] = right.Z();
+        s.shadowInput.camera.up[0] = up.X();
+        s.shadowInput.camera.up[1] = up.Y();
+        s.shadowInput.camera.up[2] = up.Z();
+        s.shadowInput.camera.tanHalfX = camera->Left();
+        s.shadowInput.camera.tanHalfY = camera->Top();
+        s.shadowInput.camera.nearDistance = camera->ClipNear();
+        s.shadowInput.camera.farDistance = ENGINE_CONFIG.shadowsZ;
     }
     if (const Landscape* landscape = scene.GetLandscape())
     {
@@ -277,7 +341,9 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
     // Flags — read from live world state where available.
     s.flags.hudEnabled = true;
     s.flags.inFirstPersonView = (GWorld && GWorld->GetCameraType() == CamInternal);
-    s.flags.shadowsEnabled = false; // shadow extraction not wired yet
+    s.flags.shadowsEnabled = engine.ShadowMapsEnabled() && s.sunEnabled;
+    s.shadowInput.enabled = s.flags.shadowsEnabled;
+    s.shadowInput.sunFactor = std::max(0.0f, std::min(1.0f, 1.0f - s.localLightScale));
 
     // GL driver error count — live snapshot.  Last-observed value is
     // provided by the caller (world.cpp keeps it across frames); we
@@ -293,6 +359,8 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
         for (const auto& item : *draws)
         {
             SceneDraw d = drawItemToSceneDraw(item);
+            if (isShadowCaster(item, d))
+                appendShadowCaster(s, d);
             PassId passId = item.passId;
             switch (d.descriptor.pass)
             {

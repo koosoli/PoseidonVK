@@ -73,6 +73,10 @@ struct SceneInputs
     // Visibility flags.
     SceneFlags flags = {};
 
+    // Shared cascade-shadow input captured alongside normal scene draws.  It
+    // references backend mesh/texture tokens rather than flattening geometry.
+    ShadowInput shadowInput = {};
+
     // Lifetime-of-process count of HIGH-severity GL driver errors
     // at the moment of extraction.  ValidateFrame fires when this
     // exceeds `lastObservedDebugErrorCount`, indicating a new

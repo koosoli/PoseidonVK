@@ -93,28 +93,30 @@ void check_I04_pass_ordering(const Frame& f, ValidationResult& r)
     {
         switch (k)
         {
-            case FramePassKind::ShadowAccum:
+            case FramePassKind::ShadowDepth:
                 return 0;
-            case FramePassKind::ShadowDarken:
+            case FramePassKind::ShadowAccum:
                 return 1;
-            case FramePassKind::Sky:
+            case FramePassKind::ShadowDarken:
                 return 2;
-            case FramePassKind::TerrainOpaque:
+            case FramePassKind::Sky:
                 return 3;
-            case FramePassKind::WorldOpaque:
+            case FramePassKind::TerrainOpaque:
                 return 4;
-            case FramePassKind::WorldCutout:
+            case FramePassKind::WorldOpaque:
                 return 5;
-            case FramePassKind::SurfaceOverlay:
+            case FramePassKind::WorldCutout:
                 return 6;
-            case FramePassKind::Water:
+            case FramePassKind::SurfaceOverlay:
                 return 7;
-            case FramePassKind::WorldTransparent:
+            case FramePassKind::Water:
                 return 8;
-            case FramePassKind::Cockpit:
+            case FramePassKind::WorldTransparent:
                 return 9;
-            case FramePassKind::ScreenSpace:
+            case FramePassKind::Cockpit:
                 return 10;
+            case FramePassKind::ScreenSpace:
+                return 11;
         }
         return 99;
     };

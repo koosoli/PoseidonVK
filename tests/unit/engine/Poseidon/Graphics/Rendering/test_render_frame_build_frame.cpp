@@ -383,6 +383,32 @@ TEST_CASE("Frame/BuildFrame: shadowsEnabled=false suppresses ShadowAccum even wi
     REQUIRE(f.passes[0].kind == Poseidon::render::frame::FramePassKind::WorldOpaque);
 }
 
+TEST_CASE("Frame/BuildFrame: CSM depth schedules before receivers without clearing them",
+           "[render-frame][build-frame][shadow]")
+{
+    auto s = makeMinimal();
+    s.flags.shadowsEnabled = true;
+    s.shadowInput.enabled = true;
+    s.shadowInput.sunFactor = 1.0f;
+    Poseidon::render::frame::ShadowCaster caster;
+    caster.mesh.id = 41;
+    caster.indexCount = 3;
+    caster.world._11 = caster.world._22 = caster.world._33 = caster.world._44 = 1.0f;
+    s.shadowInput.casters.push_back(caster);
+    s.worldOpaqueDraws.push_back(makeDraw());
+
+    const auto f = Poseidon::render::frame::BuildFrame(s);
+    REQUIRE(f.passes.size() == 2);
+    CHECK(f.passes[0].kind == Poseidon::render::frame::FramePassKind::ShadowDepth);
+    CHECK(f.passes[0].draws.empty());
+    CHECK_FALSE(f.passes[0].clearColor);
+    CHECK(f.passes[1].kind == Poseidon::render::frame::FramePassKind::WorldOpaque);
+    CHECK(f.passes[1].clearColor);
+    REQUIRE(f.shadowInput.casters.size() == 1);
+    CHECK(f.shadowInput.casters[0].mesh.id == 41);
+    REQUIRE(Poseidon::render::frame::ValidateFrame(f).ok());
+}
+
 TEST_CASE("Frame/BuildFrame: full canonical-order frame with all 7 emittable passes",
           "[render-frame][build-frame][E.8]")
 {

@@ -1716,7 +1716,10 @@ void Scene::DrawObjectsAndShadowsPass2()
             float sunFactor = 1.0f - _mainLight->NightEffect();
             sunFactor = floatMax(0.0f, floatMin(1.0f, sunFactor));
             GEngine->SetShadowMapSunFactor(sunFactor);
-            if (sunFactor > 0.01f)
+            // Frame-plan consumers submit the CSM depth phase from the same
+            // recorded mesh capture used for world receivers.  GL continues
+            // using its established collector/renderer path unchanged.
+            if (sunFactor > 0.01f && !GEngine->ConsumesRenderFramePlan())
             {
                 RenderShadowMapDepthPass(nDraw);
             }
