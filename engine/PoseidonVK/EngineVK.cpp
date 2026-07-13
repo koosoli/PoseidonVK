@@ -17,6 +17,7 @@
 #include <PoseidonVK/CloudConstantsVK.hpp>
 #include <PoseidonVK/DescriptorBindingsVK.hpp>
 #include <PoseidonVK/DrawConstantsVK.hpp>
+#include <PoseidonVK/GpuSceneVK.hpp>
 #include <PoseidonVK/RenderStateVK.hpp>
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
 #include <PoseidonVK/VertexLayoutVK.hpp>
@@ -98,6 +99,13 @@ enum class SceneGroup : std::uint32_t
     Present,
 };
 
+constexpr std::uint32_t kCloudVolumeWidth = 96;
+constexpr std::uint32_t kCloudVolumeHeight = 48;
+constexpr std::uint32_t kCloudVolumeDepth = 96;
+constexpr std::uint32_t kCloudLightVolumeWidth = 48;
+constexpr std::uint32_t kCloudLightVolumeHeight = 24;
+constexpr std::uint32_t kCloudLightVolumeDepth = 48;
+
 render::RenderPassDescriptor ScreenDescriptorFromLegacySpec(int specFlags)
 {
     render::BuildContext context;
@@ -130,11 +138,20 @@ constexpr const char kSceneVertexShader[] =
 constexpr const char kSceneFragmentShader[] =
 #include <PoseidonVK/Shaders/scene.frag.glsl.hpp>
     ;
+constexpr const char kSceneCullComputeShader[] =
+#include <PoseidonVK/Shaders/scene_cull.comp.glsl.hpp>
+    ;
 constexpr const char kProceduralSkyVertexShader[] =
 #include <PoseidonVK/Shaders/procedural_sky.vert.glsl.hpp>
     ;
 constexpr const char kProceduralSkyFragmentShader[] =
 #include <PoseidonVK/Shaders/procedural_sky.frag.glsl.hpp>
+    ;
+constexpr const char kSkyMapBakeVertexShader[] =
+#include <PoseidonVK/Shaders/sky_map_bake.vert.glsl.hpp>
+    ;
+constexpr const char kSkyMapBakeFragmentShader[] =
+#include <PoseidonVK/Shaders/sky_map_bake.frag.glsl.hpp>
     ;
 constexpr const char kVolumetricCloudVertexShader[] =
 #include <PoseidonVK/Shaders/volumetric_clouds.vert.glsl.hpp>
@@ -142,8 +159,14 @@ constexpr const char kVolumetricCloudVertexShader[] =
 constexpr const char kVolumetricCloudFragmentShader[] =
 #include <PoseidonVK/Shaders/volumetric_clouds.frag.glsl.hpp>
     ;
-constexpr const char kCloudLightingFragmentShader[] =
-#include <PoseidonVK/Shaders/cloud_lighting.frag.glsl.hpp>
+constexpr const char kCloudDensityErosionComputeShader[] =
+#include <PoseidonVK/Shaders/cloud_density_erosion.comp.glsl.hpp>
+    ;
+constexpr const char kCloudDistanceFieldComputeShader[] =
+#include <PoseidonVK/Shaders/cloud_distance_field.comp.glsl.hpp>
+    ;
+constexpr const char kCloudLightMapComputeShader[] =
+#include <PoseidonVK/Shaders/cloud_light_map.comp.glsl.hpp>
     ;
 constexpr const char kCloudTemporalFragmentShader[] =
 #include <PoseidonVK/Shaders/cloud_temporal.frag.glsl.hpp>
@@ -392,8 +415,8 @@ bool CompileBootstrapShader(const char* source, EShLanguage stage, std::vector<u
     const char* strings[] = {source};
     shader.setStrings(strings, 1);
     shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, 100);
-    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
-    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_1);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_3);
 
     const EShMessages messages = static_cast<EShMessages>(EShMsgVulkanRules | EShMsgSpvRules);
     if (!shader.parse(GetDefaultResources(), 450, false, messages))
@@ -442,7 +465,8 @@ RString EngineVK::GetRendererName() const
 
 bool EngineVK::ProceduralSkyActive() const
 {
-    return _proceduralSkyEnabled && _proceduralSkyPipeline != VK_NULL_HANDLE && _hasFrameConstants;
+    return _proceduralSkyEnabled && _proceduralSkyPipeline != VK_NULL_HANDLE && _skyMapBakePipeline != VK_NULL_HANDLE &&
+           _skyMapDescriptorSet != VK_NULL_HANDLE && _skyMap.image != VK_NULL_HANDLE && _hasFrameConstants;
 }
 
 bool EngineVK::WorldCompositionActive() const
@@ -453,6 +477,9 @@ bool EngineVK::WorldCompositionActive() const
 bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel, const std::string& displayMode)
 {
     _bitsPerPixel = bitsPerPixel > 0 ? bitsPerPixel : 32;
+    // The cached sky is the Vulkan sky path; retain the environment switch as
+    // an explicit compatibility opt-out rather than making it experimental.
+    _proceduralSkyEnabled = true;
     if (const char* value = std::getenv("POSEIDON_VK_PROCEDURAL_SKY"))
         _proceduralSkyEnabled = std::strcmp(value, "0") != 0;
     if (const char* value = std::getenv("POSEIDON_VK_VOLUMETRIC_CLOUDS"))
@@ -529,20 +556,23 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
          !CreateGpuTimingResources() || !CreateFrameConstantsBuffer() ||
           (_volumetricCloudsEnabled && !CreateCloudConstantsBuffer()) || !CreateBootstrapVertexBuffer() || !CreateBootstrapIndexBuffer() ||
          !CreateSceneVertexBuffer() || !CreateSceneIndexBuffer() || !EnsureDrawConstantsBufferCapacity(1) ||
-         !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() ||
-           (_volumetricCloudsEnabled && !CreateVolumetricCloudDescriptorLayout()) ||
+          !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() || !CreateSkyMapDescriptorLayout() ||
+            (_volumetricCloudsEnabled && (!CreateVolumetricCloudDescriptorLayout() || !CreateCloudComputeDescriptorLayouts())) ||
            (WorldCompositionActive() && !CreateWorldCompositeDescriptorLayout()) || !CreatePipelineLayout() ||
            (_temporalExposureEnabled && !CreateEyeAdaptationDescriptorLayout()) ||
-          !CreateTextureDescriptorPool() || !CreateScenePipelineLayout() || !CreateFrameDescriptorSet() ||
-           (_volumetricCloudsEnabled && !CreateVolumetricCloudPipelineLayout()) ||
+            !CreateTextureDescriptorPool() || !CreateScenePipelineLayout() || !CreateFrameDescriptorSet() ||
+            !CreateGpuSceneResources() ||
+             !CreateSkyMapPipelineLayout() ||
+            (_volumetricCloudsEnabled && (!CreateVolumetricCloudPipelineLayout() || !CreateCloudComputePipelineLayouts())) ||
            (WorldCompositionActive() && !CreateWorldCompositePipelineLayout()) ||
-           (_temporalExposureEnabled && !CreateEyeAdaptationPipelineLayout()) || !CreateCommandPool() ||
+            (_temporalExposureEnabled && !CreateEyeAdaptationPipelineLayout()) || !CreateCommandPool() ||
+           !CreateSkyMapResources() || !CreateSkyMapDescriptorSet() ||
           !CreateSwapchain() ||
-           (_volumetricCloudsEnabled && !CreateVolumetricCloudDescriptorSet()) ||
+            (_volumetricCloudsEnabled && (!CreateVolumetricCloudDescriptorSet() || !CreateCloudComputeDescriptorSets())) ||
            (_temporalExposureEnabled && !CreateEyeAdaptationDescriptorSet()) ||
            (WorldCompositionActive() && !CreateWorldCompositeDescriptorSet()) ||
           !CreateBootstrapPipeline() || !CreateScenePipeline() || !CreateProceduralSkyPipeline() ||
-           (_volumetricCloudsEnabled && !CreateVolumetricCloudPipeline()) ||
+            (_volumetricCloudsEnabled && (!CreateVolumetricCloudPipeline() || !CreateCloudComputePipelines())) ||
            (_temporalExposureEnabled && !CreateEyeAdaptationPipeline()) ||
            (WorldCompositionActive() && !CreateWorldCompositePipeline()) ||
          !CreateScreenDescriptorLayout() || !CreateScreenPipelineLayout() || !CreateScreenPipeline() ||
@@ -561,6 +591,10 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     bootstrapMesh.indexBuffer = _sceneIndexBuffer.buffer;
     bootstrapMesh.vertexCount = static_cast<std::uint32_t>(sizeof(kSceneQuadVertices) / sizeof(kSceneQuadVertices[0]));
     bootstrapMesh.indexCount = kSceneQuadIndexCount;
+    bootstrapMesh.localBoundsCenter[0] = 0.425f;
+    bootstrapMesh.localBoundsCenter[1] = 0.0f;
+    bootstrapMesh.localBoundsCenter[2] = 0.0f;
+    bootstrapMesh.localBoundsRadius = 0.48f;
     _meshRegistry.Register(kBootstrapMeshId, bootstrapMesh);
     _bootstrapMeshId = kBootstrapMeshId;
 
@@ -577,7 +611,7 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     LOG_WARN(Graphics, "Vulkan: scene raster parity is in progress; water and some legacy clipped geometry may differ "
                        "from the GL33 renderer.");
     if (_proceduralSkyEnabled)
-        LOG_INFO(Graphics, "Vulkan: experimental procedural sky is enabled");
+        LOG_INFO(Graphics, "Vulkan: HDR cached sky map is enabled");
     if (_volumetricCloudsEnabled)
         LOG_INFO(Graphics, "Vulkan: temporal fixed-world volumetric clouds are enabled");
     if (_hdrEnabled)
@@ -629,10 +663,13 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     _lastFrameConstants.grassParams[2] = _grassParam[2];
     _lastFrameConstants.grassParams[3] = _grassParam[3];
     _lastFrameConstants.time[0] = Glob.time.toFloat();
-    _lastFrameConstants.time[1] = static_cast<float>(SDL_GetTicks()) * 0.001f;
+    // Cloud displacement must advance with simulation weather, not wall-clock
+    // presentation time. Pauses and replay therefore preserve the cloud field.
+    _lastFrameConstants.time[1] = frame.atmosphere.cloudTime;
     _lastFrameConstants.wind[3] = _volumetricCloudsEnabled ? 1.0f : 0.0f;
     _lastFrameConstants.lightingParams[3] = _nightEye;
     UpdateCloudConstants();
+    UpdateSkyMapInvalidation();
 
     _lastDrawConstants = vk::BuildDrawConstants(frame);
     _lastSceneDrawCommands = vk::BuildSceneDrawCommands(_lastDrawConstants);
@@ -645,6 +682,10 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     {
         const vk::SceneDrawCommandVK& command = _lastSceneDrawCommands[commandIndex];
         const auto pass = static_cast<render::PassKind>(_lastDrawConstants[command.drawIndex].pass);
+        // The cache-backed sky owns the background.  Do not draw the legacy
+        // sky mesh after it on direct-to-swapchain frames.
+        if (_proceduralSkyEnabled && pass == render::PassKind::Sky)
+            continue;
         SceneGroup group = SceneGroup::Terrain;
         if (WorldCompositionActive())
         {
@@ -678,6 +719,7 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
         }
         _sceneCommandGroups[static_cast<std::uint32_t>(group)].push_back(commandIndex);
     }
+    BuildGpuSceneInputs();
     _hasFrameConstants = true;
 
     // Log summary once per second (every 60 frames) to avoid console spam
@@ -693,9 +735,11 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
                 passSummary += render::frame::FramePassKindName(p.kind);
                 passSummary += "=" + std::to_string(p.draws.size());
             }
-            LOG_INFO(Graphics, "FramePlan: {} | {} draws, {} cmds, {} meshes, {} texs", passSummary,
-                     _lastDrawConstants.size(), _lastSceneDrawCommands.size(), _meshRegistry.Size(),
-                     _textureRegistry.size());
+            LOG_INFO(Graphics,
+                     "FramePlan: {} | {} draws, {} cmds, {} meshes, {} texs, gpu-scene={} instances={} batches={} count={}",
+                     passSummary, _lastDrawConstants.size(), _lastSceneDrawCommands.size(), _meshRegistry.Size(),
+                     _textureRegistry.size(), _gpuSceneEnabled, _gpuSceneInstances.size(), _gpuSceneBatches.size(),
+                     _gpuSceneCapabilities.drawIndirectCount ? "indirect-count" : "fixed-indirect");
         }
     }
 
@@ -842,7 +886,11 @@ bool EngineVK::PickPhysicalDevice()
         uint32_t presentFamily = UINT32_MAX;
         for (uint32_t i = 0; i < queueCount; ++i)
         {
-            if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            // Cloud generation is recorded in the graphics command buffer so
+            // its compute-to-raymarch handoff stays ordered in one submission.
+            // Do not select a graphics-only family when the cloud path is on.
+            if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+                (!_volumetricCloudsEnabled || (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)))
                 graphicsFamily = i;
 
             VkBool32 presentSupported = VK_FALSE;
@@ -857,17 +905,47 @@ bool EngineVK::PickPhysicalDevice()
         if (graphicsFamily == UINT32_MAX || presentFamily == UINT32_MAX)
             continue;
 
+        if (_volumetricCloudsEnabled)
+        {
+            VkPhysicalDeviceFeatures features{};
+            vkGetPhysicalDeviceFeatures(device, &features);
+            VkFormatProperties cloudFormatProperties{};
+            vkGetPhysicalDeviceFormatProperties(device, VK_FORMAT_R8_UNORM, &cloudFormatProperties);
+            const VkFormatFeatureFlags requiredCloudFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                                               VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+            if (!features.shaderStorageImageExtendedFormats ||
+                (cloudFormatProperties.optimalTilingFeatures & requiredCloudFeatures) != requiredCloudFeatures)
+            {
+                LOG_DEBUG(Graphics, "Vulkan: skipping device without R8 3D storage-image cloud compute support");
+                continue;
+            }
+        }
+
         _physicalDevice = device;
         _graphicsQueueFamily = graphicsFamily;
         _presentQueueFamily = presentFamily;
 
         VkPhysicalDeviceProperties selectedProps{};
         vkGetPhysicalDeviceProperties(device, &selectedProps);
+        VkPhysicalDeviceVulkan11Features features11{};
+        features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        VkPhysicalDeviceVulkan12Features features12{};
+        features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        features11.pNext = &features12;
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &features11;
+        vkGetPhysicalDeviceFeatures2(device, &features2);
+        _gpuSceneCapabilities.compute = (queueFamilies[graphicsFamily].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+        _gpuSceneCapabilities.multiDrawIndirect = features2.features.multiDrawIndirect == VK_TRUE;
+        _gpuSceneCapabilities.shaderDrawParameters = features11.shaderDrawParameters == VK_TRUE;
+        _gpuSceneCapabilities.drawIndirectCount = features12.drawIndirectCount == VK_TRUE;
         _maxSamplerAnisotropy = selectedProps.limits.maxSamplerAnisotropy;
         _timestampPeriodNs = selectedProps.limits.timestampPeriod;
 
-        LOG_INFO(Graphics, "Vulkan: selected device '{}' (max anisotropy {})", selectedProps.deviceName,
-                 _maxSamplerAnisotropy);
+        LOG_INFO(Graphics, "Vulkan: selected device '{}' (max anisotropy {}, gpu-scene={}, indirect-count={})",
+                 selectedProps.deviceName, _maxSamplerAnisotropy, _gpuSceneCapabilities.GpuDrivenAvailable(),
+                 _gpuSceneCapabilities.drawIndirectCount);
         return true;
     }
 
@@ -895,10 +973,21 @@ bool EngineVK::CreateDevice()
 
     VkPhysicalDeviceFeatures enabledFeatures{};
     enabledFeatures.samplerAnisotropy = VK_TRUE;
+    enabledFeatures.multiDrawIndirect = _gpuSceneCapabilities.multiDrawIndirect ? VK_TRUE : VK_FALSE;
+    if (_volumetricCloudsEnabled)
+        enabledFeatures.shaderStorageImageExtendedFormats = VK_TRUE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pEnabledFeatures = &enabledFeatures;
+    VkPhysicalDeviceVulkan11Features features11{};
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features11.shaderDrawParameters = _gpuSceneCapabilities.shaderDrawParameters ? VK_TRUE : VK_FALSE;
+    VkPhysicalDeviceVulkan12Features features12{};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.drawIndirectCount = _gpuSceneCapabilities.drawIndirectCount ? VK_TRUE : VK_FALSE;
+    features11.pNext = &features12;
+    createInfo.pNext = &features11;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
     createInfo.pQueueCreateInfos = queueInfos.data();
     createInfo.enabledExtensionCount = 1;
@@ -1098,7 +1187,325 @@ bool EngineVK::EnsureDrawConstantsBufferCapacity(std::size_t drawCount)
                   "PoseidonVK Draw Constants Memory");
     if (_frameDescriptorSet)
         UpdateFrameDescriptorSet();
+    if (_gpuSceneDescriptorSet)
+        EnsureGpuSceneCapacity(_gpuSceneInstanceCapacity, _gpuSceneBatchCapacity);
     return true;
+}
+
+bool EngineVK::CreateGpuSceneResources()
+{
+    if (!_gpuSceneCapabilities.GpuDrivenAvailable())
+    {
+        LOG_INFO(Graphics, "Vulkan: GPU scene disabled; using retained CPU draw path (compute={}, mdi={}, draw-parameters={})",
+                 _gpuSceneCapabilities.compute, _gpuSceneCapabilities.multiDrawIndirect,
+                 _gpuSceneCapabilities.shaderDrawParameters);
+        return true;
+    }
+
+    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
+    for (std::uint32_t i = 0; i < bindings.size(); ++i)
+    {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+    if (vkCreateDescriptorSetLayout(_device, &layoutInfo, nullptr, &_gpuSceneDescriptorSetLayout) != VK_SUCCESS)
+        return false;
+
+    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = sizes;
+    if (vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_gpuSceneDescriptorPool) != VK_SUCCESS)
+        return false;
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = _gpuSceneDescriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &_gpuSceneDescriptorSetLayout;
+    if (vkAllocateDescriptorSets(_device, &allocateInfo, &_gpuSceneDescriptorSet) != VK_SUCCESS)
+        return false;
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.size = sizeof(std::uint32_t) * 2;
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &_gpuSceneDescriptorSetLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+    if (vkCreatePipelineLayout(_device, &pipelineLayoutInfo, nullptr, &_gpuScenePipelineLayout) != VK_SUCCESS)
+        return false;
+
+    std::vector<std::uint32_t> spirv;
+    std::string error;
+    if (!CompileBootstrapShader(kSceneCullComputeShader, EShLangCompute, spirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: GPU scene cull shader compile failed: {}", error);
+        return false;
+    }
+    VkShaderModuleCreateInfo moduleInfo{};
+    moduleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    moduleInfo.codeSize = spirv.size() * sizeof(std::uint32_t);
+    moduleInfo.pCode = spirv.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(_device, &moduleInfo, nullptr, &module) != VK_SUCCESS)
+        return false;
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = module;
+    pipelineInfo.stage.pName = "main";
+    pipelineInfo.layout = _gpuScenePipelineLayout;
+    const VkResult result = vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                                     &_gpuSceneCullPipeline);
+    vkDestroyShaderModule(_device, module, nullptr);
+    if (result != VK_SUCCESS)
+        return false;
+    _gpuSceneEnabled = EnsureGpuSceneCapacity(64, 64);
+    if (_gpuSceneEnabled)
+        SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_gpuSceneCullPipeline), "PoseidonVK GPU Scene Cull");
+    LOG_INFO(Graphics, "Vulkan: GPU scene enabled (cull/LOD/indirect, count mode={})",
+             _gpuSceneCapabilities.drawIndirectCount ? "VK_KHR_draw_indirect_count/core" : "fixed indirect fallback");
+    return _gpuSceneEnabled;
+}
+
+bool EngineVK::EnsureGpuSceneCapacity(std::size_t instanceCount, std::size_t batchCount)
+{
+    if (!_gpuSceneDescriptorSet || !_device || !_physicalDevice)
+        return false;
+    const std::size_t requiredInstances = std::max<std::size_t>(instanceCount, 1);
+    const std::size_t requiredBatches = std::max<std::size_t>(batchCount, 1);
+    if (requiredInstances > _gpuSceneInstanceCapacity || requiredBatches > _gpuSceneBatchCapacity)
+    {
+        vkDeviceWaitIdle(_device);
+        const std::size_t newInstances = std::max(requiredInstances, std::max<std::size_t>(64, _gpuSceneInstanceCapacity * 2));
+        const std::size_t newBatches = std::max(requiredBatches, std::max<std::size_t>(64, _gpuSceneBatchCapacity * 2));
+        vk::BufferVK instances, indirect, counts;
+        if (vk::CreateHostVisibleBuffer(_physicalDevice, _device, newInstances * sizeof(vk::GpuSceneInstanceVK),
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instances) != VK_SUCCESS ||
+            vk::CreateDeviceLocalBuffer(_physicalDevice, _device, newInstances * sizeof(VkDrawIndexedIndirectCommand),
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                        indirect) != VK_SUCCESS ||
+            vk::CreateDeviceLocalBuffer(_physicalDevice, _device, newBatches * sizeof(std::uint32_t),
+                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                                         counts) != VK_SUCCESS)
+        {
+            vk::DestroyBuffer(_device, instances);
+            vk::DestroyBuffer(_device, indirect);
+            vk::DestroyBuffer(_device, counts);
+            return false;
+        }
+        vk::DestroyBuffer(_device, _gpuSceneInstancesBuffer);
+        vk::DestroyBuffer(_device, _gpuSceneIndirectBuffer);
+        vk::DestroyBuffer(_device, _gpuSceneCountBuffer);
+        _gpuSceneInstancesBuffer = instances;
+        _gpuSceneIndirectBuffer = indirect;
+        _gpuSceneCountBuffer = counts;
+        _gpuSceneInstanceCapacity = newInstances;
+        _gpuSceneBatchCapacity = newBatches;
+        SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_gpuSceneInstancesBuffer.buffer),
+                      "PoseidonVK GPU Scene Instances");
+        SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_gpuSceneIndirectBuffer.buffer),
+                      "PoseidonVK GPU Scene Indirect Commands");
+        SetObjectName(VK_OBJECT_TYPE_BUFFER, VulkanObjectHandle(_gpuSceneCountBuffer.buffer),
+                      "PoseidonVK GPU Scene Draw Counts");
+    }
+    VkDescriptorBufferInfo infos[5] = {{_frameConstantsBuffer.buffer, 0, sizeof(vk::FrameConstantsVK)},
+                                        {_drawConstantsBuffer.buffer, 0, _drawConstantsBuffer.size},
+                                        {_gpuSceneInstancesBuffer.buffer, 0, _gpuSceneInstancesBuffer.size},
+                                        {_gpuSceneCountBuffer.buffer, 0, _gpuSceneCountBuffer.size},
+                                        {_gpuSceneIndirectBuffer.buffer, 0, _gpuSceneIndirectBuffer.size}};
+    VkWriteDescriptorSet writes[5]{};
+    for (std::uint32_t i = 0; i < 5; ++i)
+    {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = _gpuSceneDescriptorSet;
+        writes[i].dstBinding = i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].pBufferInfo = &infos[i];
+    }
+    vkUpdateDescriptorSets(_device, 5, writes, 0, nullptr);
+    return true;
+}
+
+void EngineVK::BuildGpuSceneInputs()
+{
+    _gpuSceneInstances.clear();
+    _gpuSceneBatches.clear();
+    if (!_gpuSceneEnabled)
+        return;
+
+    auto sameBatchState = [&](const vk::DrawConstantsVK& a, const vk::DrawConstantsVK& b)
+    {
+        return a.meshId == b.meshId && a.textureIds[0] == b.textureIds[0] && a.textureIds[1] == b.textureIds[1] &&
+               a.depth == b.depth && a.blend == b.blend && a.fog == b.fog && a.cull == b.cull &&
+               a.frontFace == b.frontFace && a.alpha == b.alpha && a.lighting == b.lighting &&
+               a.texGen == b.texGen && a.surface == b.surface && a.samplerFilter == b.samplerFilter &&
+               a.samplerClamp == b.samplerClamp && a.shader == b.shader && a.alphaRef == b.alphaRef &&
+               a.stencilExclusion == b.stencilExclusion;
+    };
+
+    for (std::uint32_t groupIndex = 0; groupIndex < _sceneCommandGroups.size(); ++groupIndex)
+    {
+        const bool orderSensitive = groupIndex == static_cast<std::uint32_t>(SceneGroup::WorldLate) ||
+                                    groupIndex == static_cast<std::uint32_t>(SceneGroup::Present);
+        const auto& commands = _sceneCommandGroups[groupIndex];
+        for (std::uint32_t commandIndex : commands)
+        {
+            const vk::SceneDrawCommandVK& command = _lastSceneDrawCommands[commandIndex];
+            const vk::DrawConstantsVK& draw = _lastDrawConstants[command.drawIndex];
+            const vk::MeshResourcesVK* mesh = _meshRegistry.Resolve(command.meshId);
+            if (!mesh || !mesh->IsValid())
+                mesh = _meshRegistry.Resolve(_bootstrapMeshId);
+            if (!mesh || !mesh->IsValid())
+                continue;
+
+            bool append = false;
+            const bool commandOrderSensitive = orderSensitive ||
+                                               draw.blend != vk::EnumToUint(render::BlendMode::Opaque);
+            if (!commandOrderSensitive && !_gpuSceneBatches.empty())
+            {
+                const vk::GpuSceneBatchVK& previous = _gpuSceneBatches.back();
+                if (previous.sceneGroup == groupIndex && previous.sourceCommandIndex < _lastSceneDrawCommands.size())
+                {
+                    const vk::SceneDrawCommandVK& previousCommand = _lastSceneDrawCommands[previous.sourceCommandIndex];
+                    append = sameBatchState(_lastDrawConstants[previousCommand.drawIndex], draw);
+                }
+            }
+            if (!append)
+            {
+                vk::GpuSceneBatchVK batch;
+                batch.firstInstance = static_cast<std::uint32_t>(_gpuSceneInstances.size());
+                batch.indirectOffset = batch.firstInstance;
+                batch.countOffset = static_cast<std::uint32_t>(_gpuSceneBatches.size());
+                batch.sourceCommandIndex = commandIndex;
+                batch.sceneGroup = groupIndex;
+                _gpuSceneBatches.push_back(batch);
+            }
+            vk::GpuSceneBatchVK& batch = _gpuSceneBatches.back();
+            vk::GpuSceneInstanceVK instance;
+            instance.localBoundsCenter[0] = mesh->localBoundsCenter[0];
+            instance.localBoundsCenter[1] = mesh->localBoundsCenter[1];
+            instance.localBoundsCenter[2] = mesh->localBoundsCenter[2];
+            instance.localBoundsCenter[3] = mesh->localBoundsRadius;
+            instance.drawIndex = command.drawIndex;
+            instance.batchIndex = batch.countOffset;
+            instance.indirectOffset = batch.indirectOffset;
+            // The current mesh uploader exposes LOD0.  The complete input
+            // layout carries four ranges/thresholds so mesh streaming can add
+            // real LODs without changing the cull/indirect protocol.
+            const std::uint32_t firstIndex = command.firstIndex;
+            const std::uint32_t indexCount = firstIndex < mesh->indexCount
+                                                 ? std::min(command.indexCount, mesh->indexCount - firstIndex)
+                                                 : 0u;
+            for (std::uint32_t lod = 0; lod < 4; ++lod)
+            {
+                const bool hasMeshLod = mesh->lodIndexCount[lod] != 0;
+                const std::uint32_t lodFirst = hasMeshLod ? mesh->lodFirstIndex[lod] : firstIndex;
+                instance.lodFirstIndex[lod] = lodFirst;
+                instance.lodIndexCount[lod] = lodFirst < mesh->indexCount
+                                                  ? (hasMeshLod ? std::min(mesh->lodIndexCount[lod], mesh->indexCount - lodFirst)
+                                                                : indexCount)
+                                                  : 0u;
+                instance.lodDistance[lod] = mesh->lodDistance[lod];
+            }
+            ++batch.instanceCount;
+            instance.batchCapacity = batch.instanceCount;
+            // Every existing member of a batch must carry its final capacity;
+            // this avoids a metadata indirection in the hot compute shader.
+            for (std::uint32_t i = batch.firstInstance; i < _gpuSceneInstances.size(); ++i)
+                _gpuSceneInstances[i].batchCapacity = batch.instanceCount;
+            _gpuSceneInstances.push_back(instance);
+        }
+    }
+    if (!EnsureGpuSceneCapacity(_gpuSceneInstances.size(), _gpuSceneBatches.size()))
+    {
+        LOG_WARN(Graphics, "Vulkan: GPU scene buffer growth failed; retaining legacy draw loop");
+        _gpuSceneEnabled = false;
+        _gpuSceneInstances.clear();
+        _gpuSceneBatches.clear();
+        return;
+    }
+    if (!_gpuSceneInstances.empty())
+        vk::UploadMappedBuffer(_gpuSceneInstancesBuffer, _gpuSceneInstances.data(),
+                                _gpuSceneInstances.size() * sizeof(vk::GpuSceneInstanceVK));
+}
+
+void EngineVK::RecordGpuSceneCull(VkCommandBuffer commandBuffer)
+{
+    if (!_gpuSceneEnabled || _gpuSceneInstances.empty() || !_gpuSceneCullPipeline)
+        return;
+    const VkDeviceSize indirectBytes = _gpuSceneInstances.size() * sizeof(VkDrawIndexedIndirectCommand);
+    const VkDeviceSize countBytes = _gpuSceneBatches.size() * sizeof(std::uint32_t);
+    vkCmdFillBuffer(commandBuffer, _gpuSceneIndirectBuffer.buffer, 0, indirectBytes, 0);
+    vkCmdFillBuffer(commandBuffer, _gpuSceneCountBuffer.buffer, 0, countBytes, 0);
+    VkBufferMemoryBarrier beforeCompute[5]{};
+    for (VkBufferMemoryBarrier& barrier : beforeCompute)
+    {
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    beforeCompute[0].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    beforeCompute[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    beforeCompute[0].buffer = _frameConstantsBuffer.buffer;
+    beforeCompute[0].size = _frameConstantsBuffer.size;
+    beforeCompute[1].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    beforeCompute[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    beforeCompute[1].buffer = _drawConstantsBuffer.buffer;
+    beforeCompute[1].size = _drawConstantsBuffer.size;
+    beforeCompute[2].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    beforeCompute[2].buffer = _gpuSceneInstancesBuffer.buffer;
+    beforeCompute[2].size = _gpuSceneInstancesBuffer.size;
+    beforeCompute[3].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    beforeCompute[3].buffer = _gpuSceneIndirectBuffer.buffer;
+    beforeCompute[3].size = indirectBytes;
+    beforeCompute[4].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    beforeCompute[4].buffer = _gpuSceneCountBuffer.buffer;
+    beforeCompute[4].size = countBytes;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 5, beforeCompute, 0, nullptr);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _gpuSceneCullPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _gpuScenePipelineLayout, 0, 1,
+                            &_gpuSceneDescriptorSet, 0, nullptr);
+    const std::uint32_t dispatchInfo[] = {static_cast<std::uint32_t>(_gpuSceneInstances.size()),
+                                          static_cast<std::uint32_t>(_gpuSceneBatches.size())};
+    vkCmdPushConstants(commandBuffer, _gpuScenePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(dispatchInfo),
+                       dispatchInfo);
+    vkCmdDispatch(commandBuffer, (dispatchInfo[0] + 63u) / 64u, 1, 1);
+    VkBufferMemoryBarrier afterCompute[2]{};
+    for (VkBufferMemoryBarrier& barrier : afterCompute)
+    {
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    }
+    afterCompute[0].buffer = _gpuSceneIndirectBuffer.buffer;
+    afterCompute[0].size = indirectBytes;
+    afterCompute[1].buffer = _gpuSceneCountBuffer.buffer;
+    afterCompute[1].size = countBytes;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 2,
+                         afterCompute, 0, nullptr);
 }
 
 bool EngineVK::EnsureScreenVertexBufferCapacity(std::size_t vertexCount, std::size_t indexCount)
@@ -1793,6 +2200,241 @@ void EngineVK::DestroyDepthResources()
     _depthFormat = VK_FORMAT_UNDEFINED;
 }
 
+bool EngineVK::CreateSkyMapDescriptorLayout()
+{
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &binding;
+    const VkResult result = vkCreateDescriptorSetLayout(_device, &createInfo, nullptr, &_skyMapDescriptorSetLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: sky-map descriptor layout creation failed: {}", VkResultName(result));
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_skyMapDescriptorSetLayout),
+                  "PoseidonVK HDR Sky Map Descriptor Layout");
+    return true;
+}
+
+bool EngineVK::CreateSkyMapPipelineLayout()
+{
+    VkPushConstantRange displayPush{};
+    displayPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    displayPush.offset = 0;
+    displayPush.size = sizeof(float);
+    const VkDescriptorSetLayout displayLayouts[] = {_frameDescriptorSetLayout, _skyMapDescriptorSetLayout};
+    VkPipelineLayoutCreateInfo displayInfo{};
+    displayInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    displayInfo.setLayoutCount = 2;
+    displayInfo.pSetLayouts = displayLayouts;
+    displayInfo.pushConstantRangeCount = 1;
+    displayInfo.pPushConstantRanges = &displayPush;
+    VkResult result = vkCreatePipelineLayout(_device, &displayInfo, nullptr, &_skyMapPipelineLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: sky-map display pipeline layout creation failed: {}", VkResultName(result));
+        return false;
+    }
+
+    VkPipelineLayoutCreateInfo bakeInfo{};
+    bakeInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    bakeInfo.setLayoutCount = 1;
+    bakeInfo.pSetLayouts = &_frameDescriptorSetLayout;
+    result = vkCreatePipelineLayout(_device, &bakeInfo, nullptr, &_skyMapBakePipelineLayout);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: sky-map bake pipeline layout creation failed: {}", VkResultName(result));
+        vkDestroyPipelineLayout(_device, _skyMapPipelineLayout, nullptr);
+        _skyMapPipelineLayout = VK_NULL_HANDLE;
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_skyMapPipelineLayout),
+                  "PoseidonVK HDR Sky Map Display Pipeline Layout");
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_skyMapBakePipelineLayout),
+                  "PoseidonVK HDR Sky Map Bake Pipeline Layout");
+    return true;
+}
+
+bool EngineVK::CreateSkyMapResources()
+{
+    constexpr std::uint32_t kSkyMapWidth = 512;
+    constexpr std::uint32_t kSkyMapHeight = 256;
+    constexpr VkFormat kSkyMapFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    VkFormatProperties formatProperties{};
+    vkGetPhysicalDeviceFormatProperties(_physicalDevice, kSkyMapFormat, &formatProperties);
+    const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((formatProperties.optimalTilingFeatures & required) != required)
+    {
+        LOG_ERROR(Graphics, "Vulkan: R16G16B16A16 sky-map attachments are unsupported by this device");
+        return false;
+    }
+
+    const VkResult imageResult = vk::CreateImage2D(
+        _physicalDevice, _device, kSkyMapWidth, kSkyMapHeight, 1, kSkyMapFormat,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, _skyMap);
+    if (imageResult != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map image creation failed: {}", VkResultName(imageResult));
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.maxLod = 0.0f;
+    if (vkCreateSampler(_device, &samplerInfo, nullptr, &_skyMapSampler) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map sampler creation failed");
+        DestroySkyMapResources();
+        return false;
+    }
+
+    VkAttachmentDescription attachment{};
+    attachment.format = kSkyMapFormat;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // The explicit barriers in RecordSkyMapBake own the image layout changes.
+    attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference colorReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorReference;
+    VkRenderPassCreateInfo passInfo{};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    passInfo.attachmentCount = 1;
+    passInfo.pAttachments = &attachment;
+    passInfo.subpassCount = 1;
+    passInfo.pSubpasses = &subpass;
+    if (vkCreateRenderPass(_device, &passInfo, nullptr, &_skyMapRenderPass) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map render pass creation failed");
+        DestroySkyMapResources();
+        return false;
+    }
+
+    VkFramebufferCreateInfo framebufferInfo{};
+    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass = _skyMapRenderPass;
+    framebufferInfo.attachmentCount = 1;
+    framebufferInfo.pAttachments = &_skyMap.view;
+    framebufferInfo.width = kSkyMapWidth;
+    framebufferInfo.height = kSkyMapHeight;
+    framebufferInfo.layers = 1;
+    if (vkCreateFramebuffer(_device, &framebufferInfo, nullptr, &_skyMapFramebuffer) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map framebuffer creation failed");
+        DestroySkyMapResources();
+        return false;
+    }
+
+    _skyMapLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    _skyMapDirty = true;
+    _skyMapValid = false;
+    SetObjectName(VK_OBJECT_TYPE_IMAGE, VulkanObjectHandle(_skyMap.image), "PoseidonVK HDR Cached Sky Map");
+    SetObjectName(VK_OBJECT_TYPE_IMAGE_VIEW, VulkanObjectHandle(_skyMap.view), "PoseidonVK HDR Cached Sky Map View");
+    SetObjectName(VK_OBJECT_TYPE_SAMPLER, VulkanObjectHandle(_skyMapSampler), "PoseidonVK HDR Cached Sky Map Sampler");
+    SetObjectName(VK_OBJECT_TYPE_RENDER_PASS, VulkanObjectHandle(_skyMapRenderPass), "PoseidonVK HDR Sky Map Bake Render Pass");
+    SetObjectName(VK_OBJECT_TYPE_FRAMEBUFFER, VulkanObjectHandle(_skyMapFramebuffer), "PoseidonVK HDR Sky Map Bake Framebuffer");
+    return true;
+}
+
+bool EngineVK::CreateSkyMapDescriptorSet()
+{
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    VkResult result = vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_skyMapDescriptorPool);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map descriptor pool creation failed: {}", VkResultName(result));
+        return false;
+    }
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = _skyMapDescriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &_skyMapDescriptorSetLayout;
+    result = vkAllocateDescriptorSets(_device, &allocateInfo, &_skyMapDescriptorSet);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: HDR sky-map descriptor set allocation failed: {}", VkResultName(result));
+        return false;
+    }
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.sampler = _skyMapSampler;
+    imageInfo.imageView = _skyMap.view;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = _skyMapDescriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(_device, 1, &write, 0, nullptr);
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_POOL, VulkanObjectHandle(_skyMapDescriptorPool), "PoseidonVK HDR Sky Map Descriptor Pool");
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET, VulkanObjectHandle(_skyMapDescriptorSet), "PoseidonVK HDR Sky Map Descriptor Set");
+    return true;
+}
+
+void EngineVK::DestroySkyMapResources()
+{
+    if (_device && _skyMapFramebuffer)
+        vkDestroyFramebuffer(_device, _skyMapFramebuffer, nullptr);
+    _skyMapFramebuffer = VK_NULL_HANDLE;
+    if (_device && _skyMapRenderPass)
+        vkDestroyRenderPass(_device, _skyMapRenderPass, nullptr);
+    _skyMapRenderPass = VK_NULL_HANDLE;
+    if (_device && _skyMapSampler)
+        vkDestroySampler(_device, _skyMapSampler, nullptr);
+    _skyMapSampler = VK_NULL_HANDLE;
+    vk::DestroyImage(_device, _skyMap);
+    _skyMapLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    _skyMapValid = false;
+    _skyMapDirty = true;
+}
+
+void EngineVK::DestroySkyMapDescriptorResources()
+{
+    _skyMapDescriptorSet = VK_NULL_HANDLE;
+    if (_device && _skyMapDescriptorPool)
+        vkDestroyDescriptorPool(_device, _skyMapDescriptorPool, nullptr);
+    _skyMapDescriptorPool = VK_NULL_HANDLE;
+    if (_device && _skyMapDescriptorSetLayout)
+        vkDestroyDescriptorSetLayout(_device, _skyMapDescriptorSetLayout, nullptr);
+    _skyMapDescriptorSetLayout = VK_NULL_HANDLE;
+}
+
+void EngineVK::DestroySkyMapPipelineLayout()
+{
+    if (_device && _skyMapPipelineLayout)
+        vkDestroyPipelineLayout(_device, _skyMapPipelineLayout, nullptr);
+    _skyMapPipelineLayout = VK_NULL_HANDLE;
+    if (_device && _skyMapBakePipelineLayout)
+        vkDestroyPipelineLayout(_device, _skyMapBakePipelineLayout, nullptr);
+    _skyMapBakePipelineLayout = VK_NULL_HANDLE;
+}
+
 bool EngineVK::CreateCloudConstantsBuffer()
 {
     const VkResult result = vk::CreateHostVisibleBuffer(_physicalDevice, _device, sizeof(vk::CloudConstantsVK),
@@ -1817,10 +2459,14 @@ void EngineVK::UpdateCloudConstants()
     const float delta = _cloudLastUpdateSeconds < 0.0f ? 0.0f : std::clamp(now - _cloudLastUpdateSeconds, 0.0f, 0.1f);
     _cloudLastUpdateSeconds = now;
     const vk::CloudConstantsVK previous = _cloudConstants;
-    constexpr float kVolumeGrid = 16384.0f;
-    constexpr float kVolumeHalfExtent = kVolumeGrid * 0.5f;
-    const float originX = std::floor(_lastFrameConstants.cloudOrigin[0] / kVolumeGrid) * kVolumeGrid + kVolumeHalfExtent;
-    const float originZ = std::floor(_lastFrameConstants.cloudOrigin[2] / kVolumeGrid) * kVolumeGrid + kVolumeHalfExtent;
+    // The simulation owns the world extent.  Snap the persistent field to that
+    // extent so camera-relative renderer state never changes cloud placement.
+    const float volumeExtent = std::clamp(_lastFrameConstants.cloudGeometry[2], 16384.0f, 131072.0f);
+    const float volumeHalfExtent = volumeExtent * 0.5f;
+    // The volume origin is its centre. Adding half the extent here placed the
+    // camera on an edge, so clouds vanished whenever the view faced outward.
+    const float originX = std::floor(_lastFrameConstants.cloudOrigin[0] / volumeExtent + 0.5f) * volumeExtent;
+    const float originZ = std::floor(_lastFrameConstants.cloudOrigin[2] / volumeExtent + 0.5f) * volumeExtent;
     const bool movedVolume = _cloudHistoryValid &&
                              (originX != previous.volumeOrigin[0] || originZ != previous.volumeOrigin[2]);
 
@@ -1835,9 +2481,9 @@ void EngineVK::UpdateCloudConstants()
     _cloudConstants.windOffset[1] = previous.windOffset[1] + _lastFrameConstants.wind[1] * delta;
     _cloudConstants.windOffset[2] = previous.windOffset[2] + _lastFrameConstants.wind[2] * delta;
     _cloudConstants.volumeOrigin[0] = originX;
-    _cloudConstants.volumeOrigin[1] = 4000.0f;
+    _cloudConstants.volumeOrigin[1] = _lastFrameConstants.cloudGeometry[0];
     _cloudConstants.volumeOrigin[2] = originZ;
-    _cloudConstants.volumeOrigin[3] = kVolumeHalfExtent;
+    _cloudConstants.volumeOrigin[3] = volumeHalfExtent;
     _cloudConstants.renderSizeAndHistory[0] = static_cast<float>(_cloudCurrent.width);
     _cloudConstants.renderSizeAndHistory[1] = static_cast<float>(_cloudCurrent.height);
     _cloudConstants.renderSizeAndHistory[2] = _cloudHistoryValid && !movedVolume ? 1.0f : 0.0f;
@@ -1848,6 +2494,40 @@ void EngineVK::UpdateCloudConstants()
     _previousCloudFrameConstants = _lastFrameConstants;
     if (movedVolume)
         _cloudHistoryValid = false;
+    const float base = _lastFrameConstants.cloudGeometry[0];
+    const float top = _lastFrameConstants.cloudGeometry[1];
+    const float halfExtent = _cloudConstants.volumeOrigin[3];
+    if (top <= base || halfExtent <= 0.0f)
+        return;
+
+    const std::array<float, 11> parameters = {
+        _cloudConstants.volumeOrigin[0], _cloudConstants.volumeOrigin[2], _cloudConstants.windOffset[0],
+        _cloudConstants.windOffset[1], _cloudConstants.windOffset[2], _lastFrameConstants.cloudWeather[0],
+        _lastFrameConstants.cloudWeather[2], _lastFrameConstants.skyVisibility[2], base, top, halfExtent};
+    const float voxelWorldSize = (halfExtent * 2.0f) / static_cast<float>(kCloudVolumeWidth);
+    const bool volumeMoved = !_cloudVolumeBuilt || parameters[0] != _cloudVolumeBuildParameters[0] ||
+                             parameters[1] != _cloudVolumeBuildParameters[1];
+    const bool advected = !_cloudVolumeBuilt ||
+                          std::abs(parameters[2] - _cloudVolumeBuildParameters[2]) >= voxelWorldSize * 0.5f ||
+                          std::abs(parameters[3] - _cloudVolumeBuildParameters[3]) >= voxelWorldSize * 0.5f ||
+                          std::abs(parameters[4] - _cloudVolumeBuildParameters[4]) >= voxelWorldSize * 0.5f;
+    const bool weatherChanged = !_cloudVolumeBuilt || parameters[5] != _cloudVolumeBuildParameters[5] ||
+                                parameters[6] != _cloudVolumeBuildParameters[6] ||
+                                parameters[7] != _cloudVolumeBuildParameters[7] ||
+                                parameters[8] != _cloudVolumeBuildParameters[8] ||
+                                parameters[9] != _cloudVolumeBuildParameters[9] ||
+                                parameters[10] != _cloudVolumeBuildParameters[10];
+    if (volumeMoved || advected || weatherChanged)
+    {
+        // Rebuilds are quantized to a density voxel.  The command recorder owns
+        // the actual GPU work so no CPU voxel payload or staging upload exists.
+        _cloudVolumeBuildParameters = parameters;
+        _cloudVolumeRebuildPending = true;
+        LOG_INFO(Graphics,
+                 "Vulkan: cloud-volume rebuild overcast={:.3f} alpha={:.3f} rain={:.3f} height={:.0f}..{:.0f}",
+                 _lastFrameConstants.cloudWeather[0], _lastFrameConstants.cloudWeather[2],
+                 _lastFrameConstants.cloudWeather[1], base, top);
+    }
 }
 
 bool EngineVK::CreateWorldTarget()
@@ -1989,8 +2669,7 @@ bool EngineVK::CreateCloudResources()
         SetObjectName(VK_OBJECT_TYPE_IMAGE, VulkanObjectHandle(image.image), name);
         return true;
     };
-    if (!createCloudImage(_cloudLighting, "PoseidonVK Cloud Light Cache") ||
-        !createCloudImage(_cloudCurrent, "PoseidonVK Cloud Raymarch") ||
+    if (!createCloudImage(_cloudCurrent, "PoseidonVK Cloud Raymarch") ||
         !createCloudImage(_cloudHistory[0], "PoseidonVK Cloud History 0") ||
         !createCloudImage(_cloudHistory[1], "PoseidonVK Cloud History 1"))
     {
@@ -2000,11 +2679,44 @@ bool EngineVK::CreateCloudResources()
     // Every cloud target is sampled by a later pass and is reused next frame.
     // Establish shader-read layout once so the render passes can explicitly
     // transition from that known state instead of relying on undefined layout.
-    for (vk::ImageVK* image : std::array<vk::ImageVK*, 4>{&_cloudLighting, &_cloudCurrent,
-                                                           &_cloudHistory[0], &_cloudHistory[1]})
+    for (vk::ImageVK* image : std::array<vk::ImageVK*, 3>{&_cloudCurrent, &_cloudHistory[0], &_cloudHistory[1]})
     {
         vk::TransitionImageLayout(_device, _commandPool, _graphicsQueue, image->image, 1,
                                   VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    vkGetPhysicalDeviceFormatProperties(_physicalDevice, VK_FORMAT_R8_UNORM, &properties);
+    constexpr VkFormatFeatureFlags volumeFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                                     VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    if ((properties.optimalTilingFeatures & volumeFeatures) != volumeFeatures)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cloud volume fields require sampled and storage R8_UNORM support");
+        DestroyCloudResources();
+        return false;
+    }
+    const auto createVolume = [&](vk::ImageVK& image, std::uint32_t volumeWidth, std::uint32_t volumeHeight,
+                                  std::uint32_t volumeDepth, const char* name)
+    {
+        if (vk::CreateImage3D(_physicalDevice, _device, volumeWidth, volumeHeight, volumeDepth, VK_FORMAT_R8_UNORM,
+                              VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, image) != VK_SUCCESS)
+            return false;
+        SetObjectName(VK_OBJECT_TYPE_IMAGE, VulkanObjectHandle(image.image), name);
+        vk::TransitionImageLayout(_device, _commandPool, _graphicsQueue, image.image, 1,
+                                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        return true;
+    };
+    if (!createVolume(_cloudDensityVolume, kCloudVolumeWidth, kCloudVolumeHeight, kCloudVolumeDepth,
+                      "PoseidonVK Cloud Density Volume") ||
+        !createVolume(_cloudDistanceVolume, kCloudVolumeWidth, kCloudVolumeHeight, kCloudVolumeDepth,
+                      "PoseidonVK Cloud Distance Volume") ||
+        !createVolume(_cloudLightVolumes[0], kCloudLightVolumeWidth, kCloudLightVolumeHeight, kCloudLightVolumeDepth,
+                      "PoseidonVK Cloud Light Volume 0") ||
+        !createVolume(_cloudLightVolumes[1], kCloudLightVolumeWidth, kCloudLightVolumeHeight, kCloudLightVolumeDepth,
+                       "PoseidonVK Cloud Light Volume 1"))
+    {
+        LOG_ERROR(Graphics, "Vulkan: persistent cloud volume resource creation failed");
+        DestroyCloudResources();
+        return false;
     }
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2057,8 +2769,7 @@ bool EngineVK::CreateCloudResources()
         info.pDependencies = dependencies;
         return vkCreateRenderPass(_device, &info, nullptr, &pass) == VK_SUCCESS;
     };
-    if (!createColorPass(_cloudLightingRenderPass, kCloudFormat, VK_ATTACHMENT_LOAD_OP_DONT_CARE) ||
-        !createColorPass(_cloudRaymarchRenderPass, kCloudFormat, VK_ATTACHMENT_LOAD_OP_DONT_CARE) ||
+    if (!createColorPass(_cloudRaymarchRenderPass, kCloudFormat, VK_ATTACHMENT_LOAD_OP_CLEAR) ||
         !createColorPass(_cloudTemporalRenderPass, kCloudFormat, VK_ATTACHMENT_LOAD_OP_DONT_CARE) ||
         !createColorPass(_cloudCompositeRenderPass,
                          _hdrEnabled ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM,
@@ -2133,8 +2844,7 @@ bool EngineVK::CreateCloudResources()
         info.layers = 1;
         return vkCreateFramebuffer(_device, &info, nullptr, &framebuffer) == VK_SUCCESS;
     };
-    if (!createFramebuffer(_cloudLightingRenderPass, _cloudLighting.view, _cloudLightingFramebuffer, width, height) ||
-        !createFramebuffer(_cloudRaymarchRenderPass, _cloudCurrent.view, _cloudRaymarchFramebuffer, width, height) ||
+    if (!createFramebuffer(_cloudRaymarchRenderPass, _cloudCurrent.view, _cloudRaymarchFramebuffer, width, height) ||
         !createFramebuffer(_cloudTemporalRenderPass, _cloudHistory[0].view, _cloudTemporalFramebuffers[0], width, height) ||
         !createFramebuffer(_cloudTemporalRenderPass, _cloudHistory[1].view, _cloudTemporalFramebuffers[1], width, height) ||
         !createFramebuffer(_cloudCompositeRenderPass, _worldColorImageView, _cloudCompositeFramebuffer,
@@ -2159,6 +2869,9 @@ bool EngineVK::CreateCloudResources()
     }
     _cloudHistoryValid = false;
     _cloudHistoryCurrentIndex = 0;
+    _cloudLightVolumeReadIndex = 0;
+    _cloudVolumeBuilt = false;
+    _cloudVolumeRebuildPending = true;
     return true;
 }
 
@@ -2169,15 +2882,15 @@ void EngineVK::DestroyCloudResources()
         if (framebuffer) vkDestroyFramebuffer(_device, framebuffer, nullptr);
         framebuffer = VK_NULL_HANDLE;
     }
-    const std::array<VkFramebuffer*, 4> framebuffers = {
-        &_cloudLightingFramebuffer, &_cloudRaymarchFramebuffer, &_cloudCompositeFramebuffer, &_worldLateFramebuffer};
+    const std::array<VkFramebuffer*, 3> framebuffers = {
+        &_cloudRaymarchFramebuffer, &_cloudCompositeFramebuffer, &_worldLateFramebuffer};
     for (VkFramebuffer* framebuffer : framebuffers)
     {
         if (*framebuffer) vkDestroyFramebuffer(_device, *framebuffer, nullptr);
         *framebuffer = VK_NULL_HANDLE;
     }
-    const std::array<VkRenderPass*, 5> passes = {
-        &_cloudLightingRenderPass, &_cloudRaymarchRenderPass, &_cloudTemporalRenderPass, &_cloudCompositeRenderPass,
+    const std::array<VkRenderPass*, 4> passes = {
+        &_cloudRaymarchRenderPass, &_cloudTemporalRenderPass, &_cloudCompositeRenderPass,
         &_worldLateRenderPass};
     for (VkRenderPass* pass : passes)
     {
@@ -2186,11 +2899,99 @@ void EngineVK::DestroyCloudResources()
     }
     if (_cloudSampler) vkDestroySampler(_device, _cloudSampler, nullptr);
     _cloudSampler = VK_NULL_HANDLE;
-    vk::DestroyImage(_device, _cloudLighting);
     vk::DestroyImage(_device, _cloudCurrent);
     for (vk::ImageVK& image : _cloudHistory) vk::DestroyImage(_device, image);
+    vk::DestroyImage(_device, _cloudDensityVolume);
+    vk::DestroyImage(_device, _cloudDistanceVolume);
+    for (vk::ImageVK& image : _cloudLightVolumes) vk::DestroyImage(_device, image);
     _cloudHistoryValid = false;
     _cloudHistoryCurrentIndex = 0;
+    _cloudLightVolumeReadIndex = 0;
+    _cloudVolumeBuilt = false;
+    _cloudVolumeRebuildPending = true;
+}
+
+void EngineVK::RecordCloudVolumeCompute(VkCommandBuffer commandBuffer)
+{
+    if (!_cloudGenerationDescriptorSet || !_cloudLightingDescriptorSets[0] || !_cloudDensityErosionPipeline ||
+        !_cloudDistanceFieldPipeline || !_cloudLightMapPipeline)
+        return;
+
+    const auto imageBarrier = [&](VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+                                  VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
+                                  VkAccessFlags srcAccess, VkAccessFlags dstAccess)
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstAccessMask = dstAccess;
+        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    };
+    const VkPipelineStageFlags shaderReadStages = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+    if (_cloudVolumeRebuildPending)
+    {
+        // Density erosion and the distance transform share GENERAL layouts.
+        // The explicit compute write/read barrier prevents the distance pass
+        // from observing partially written density voxels.
+        imageBarrier(_cloudDensityVolume.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                     shaderReadStages, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                     VK_ACCESS_SHADER_WRITE_BIT);
+        imageBarrier(_cloudDistanceVolume.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                     shaderReadStages, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                     VK_ACCESS_SHADER_WRITE_BIT);
+        VkDescriptorSet generationSets[] = {_frameDescriptorSet, _cloudGenerationDescriptorSet};
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudDensityErosionPipeline);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudGenerationPipelineLayout, 0, 2,
+                                generationSets, 0, nullptr);
+        vkCmdDispatch(commandBuffer, (kCloudVolumeWidth + 3u) / 4u, (kCloudVolumeHeight + 3u) / 4u,
+                      (kCloudVolumeDepth + 3u) / 4u);
+        imageBarrier(_cloudDensityVolume.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudDistanceFieldPipeline);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudGenerationPipelineLayout, 0, 2,
+                                generationSets, 0, nullptr);
+        vkCmdDispatch(commandBuffer, (kCloudVolumeWidth + 3u) / 4u, (kCloudVolumeHeight + 3u) / 4u,
+                      (kCloudVolumeDepth + 3u) / 4u);
+        imageBarrier(_cloudDensityVolume.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, shaderReadStages,
+                     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                     VK_ACCESS_SHADER_READ_BIT);
+        imageBarrier(_cloudDistanceVolume.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, shaderReadStages, VK_ACCESS_SHADER_WRITE_BIT,
+                     VK_ACCESS_SHADER_READ_BIT);
+        _cloudVolumeRebuildPending = false;
+        _cloudVolumeBuilt = true;
+    }
+
+    // Illumination is progressive: every submitted cloud frame writes the
+    // non-sampled light volume, publishes it to the fragment stage, then makes
+    // that volume the raymarch read side. The previous read volume is never
+    // written while the graphics pass can sample it.
+    const std::uint32_t lightWriteIndex = 1u - _cloudLightVolumeReadIndex;
+    imageBarrier(_cloudLightVolumes[lightWriteIndex].image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 VK_IMAGE_LAYOUT_GENERAL, shaderReadStages, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+    VkDescriptorSet lightingSets[] = {_frameDescriptorSet, _cloudLightingDescriptorSets[lightWriteIndex]};
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudLightMapPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _cloudLightingPipelineLayout, 0, 2,
+                            lightingSets, 0, nullptr);
+    vkCmdDispatch(commandBuffer, (kCloudLightVolumeWidth + 3u) / 4u, (kCloudLightVolumeHeight + 3u) / 4u,
+                  (kCloudLightVolumeDepth + 3u) / 4u);
+    imageBarrier(_cloudLightVolumes[lightWriteIndex].image, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    _cloudLightVolumeReadIndex = lightWriteIndex;
 }
 
 bool EngineVK::CreateEyeAdaptationResources()
@@ -2496,7 +3297,22 @@ bool EngineVK::CreateScenePipeline()
     std::vector<uint32_t> vertexSpirv;
     std::vector<uint32_t> fragmentSpirv;
     std::string error;
-    if (!CompileBootstrapShader(kSceneVertexShader, EShLangVertex, vertexSpirv, error))
+    std::string sceneVertexSource = kSceneVertexShader;
+    if (_gpuSceneEnabled)
+    {
+        // Embedded GLSL starts with a raw-string newline. Insert after the
+        // version directive, never before it: GLSL requires #version first.
+        const std::size_t version = sceneVertexSource.find("#version");
+        const std::size_t lineEnd = version == std::string::npos ? std::string::npos
+                                                                  : sceneVertexSource.find('\n', version);
+        if (lineEnd == std::string::npos)
+        {
+            LOG_ERROR(Graphics, "Vulkan: scene vertex shader has no #version directive");
+            return false;
+        }
+        sceneVertexSource.insert(lineEnd + 1, "#define POSEIDON_GPU_SCENE 1\n");
+    }
+    if (!CompileBootstrapShader(sceneVertexSource.c_str(), EShLangVertex, vertexSpirv, error))
     {
         LOG_ERROR(Graphics, "Vulkan: scene vertex shader compile failed: {}", error);
         return false;
@@ -2681,14 +3497,22 @@ bool EngineVK::CreateProceduralSkyPipeline()
         vkDestroyPipeline(_device, _proceduralSkyPipeline, nullptr);
         _proceduralSkyPipeline = VK_NULL_HANDLE;
     }
-
+    if (_skyMapBakePipeline)
+    {
+        vkDestroyPipeline(_device, _skyMapBakePipeline, nullptr);
+        _skyMapBakePipeline = VK_NULL_HANDLE;
+    }
     std::vector<uint32_t> vertexSpirv;
     std::vector<uint32_t> fragmentSpirv;
+    std::vector<uint32_t> bakeVertexSpirv;
+    std::vector<uint32_t> bakeFragmentSpirv;
     std::string error;
     if (!CompileBootstrapShader(kProceduralSkyVertexShader, EShLangVertex, vertexSpirv, error) ||
-        !CompileBootstrapShader(kProceduralSkyFragmentShader, EShLangFragment, fragmentSpirv, error))
+        !CompileBootstrapShader(kProceduralSkyFragmentShader, EShLangFragment, fragmentSpirv, error) ||
+        !CompileBootstrapShader(kSkyMapBakeVertexShader, EShLangVertex, bakeVertexSpirv, error) ||
+        !CompileBootstrapShader(kSkyMapBakeFragmentShader, EShLangFragment, bakeFragmentSpirv, error))
     {
-        LOG_ERROR(Graphics, "Vulkan: procedural sky shader compile failed: {}", error);
+        LOG_ERROR(Graphics, "Vulkan: cached sky shader compile failed: {}", error);
         return false;
     }
 
@@ -2703,13 +3527,16 @@ bool EngineVK::CreateProceduralSkyPipeline()
 
     VkShaderModule vertexModule = VK_NULL_HANDLE;
     VkShaderModule fragmentModule = VK_NULL_HANDLE;
-    if (!createShaderModule(vertexSpirv, vertexModule) || !createShaderModule(fragmentSpirv, fragmentModule))
+    VkShaderModule bakeVertexModule = VK_NULL_HANDLE;
+    VkShaderModule bakeFragmentModule = VK_NULL_HANDLE;
+    if (!createShaderModule(vertexSpirv, vertexModule) || !createShaderModule(fragmentSpirv, fragmentModule) ||
+        !createShaderModule(bakeVertexSpirv, bakeVertexModule) || !createShaderModule(bakeFragmentSpirv, bakeFragmentModule))
     {
-        if (vertexModule)
-            vkDestroyShaderModule(_device, vertexModule, nullptr);
-        if (fragmentModule)
-            vkDestroyShaderModule(_device, fragmentModule, nullptr);
-        LOG_ERROR(Graphics, "Vulkan: procedural sky shader module creation failed");
+        if (vertexModule) vkDestroyShaderModule(_device, vertexModule, nullptr);
+        if (fragmentModule) vkDestroyShaderModule(_device, fragmentModule, nullptr);
+        if (bakeVertexModule) vkDestroyShaderModule(_device, bakeVertexModule, nullptr);
+        if (bakeFragmentModule) vkDestroyShaderModule(_device, bakeFragmentModule, nullptr);
+        LOG_ERROR(Graphics, "Vulkan: cached sky shader module creation failed");
         return false;
     }
 
@@ -2769,33 +3596,254 @@ bool EngineVK::CreateProceduralSkyPipeline()
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.layout = _pipelineLayout;
+    pipelineInfo.layout = _skyMapPipelineLayout;
     pipelineInfo.renderPass = _renderPass;
 
-    const VkResult result =
-        vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &_proceduralSkyPipeline);
+    VkResult result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &_proceduralSkyPipeline);
+    if (result == VK_SUCCESS)
+    {
+        shaderStages[0].module = bakeVertexModule;
+        shaderStages[1].module = bakeFragmentModule;
+        VkViewport bakeViewport{};
+        bakeViewport.width = static_cast<float>(_skyMap.width);
+        bakeViewport.height = static_cast<float>(_skyMap.height);
+        bakeViewport.minDepth = 0.0f;
+        bakeViewport.maxDepth = 1.0f;
+        VkRect2D bakeScissor{};
+        bakeScissor.extent = {_skyMap.width, _skyMap.height};
+        viewportState.pViewports = &bakeViewport;
+        viewportState.pScissors = &bakeScissor;
+        pipelineInfo.layout = _skyMapBakePipelineLayout;
+        pipelineInfo.renderPass = _skyMapRenderPass;
+        result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &_skyMapBakePipeline);
+    }
+    vkDestroyShaderModule(_device, bakeFragmentModule, nullptr);
+    vkDestroyShaderModule(_device, bakeVertexModule, nullptr);
     vkDestroyShaderModule(_device, fragmentModule, nullptr);
     vkDestroyShaderModule(_device, vertexModule, nullptr);
     if (result != VK_SUCCESS)
     {
-        LOG_ERROR(Graphics, "Vulkan: procedural sky pipeline creation failed: {}", VkResultName(result));
+        if (_proceduralSkyPipeline)
+        {
+            vkDestroyPipeline(_device, _proceduralSkyPipeline, nullptr);
+            _proceduralSkyPipeline = VK_NULL_HANDLE;
+        }
+        LOG_ERROR(Graphics, "Vulkan: cached sky pipeline creation failed: {}", VkResultName(result));
         return false;
     }
 
     SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_proceduralSkyPipeline),
-                  "PoseidonVK Procedural Sky Pipeline");
-    LOG_INFO(Graphics, "Vulkan: procedural sky pipeline created");
+                  "PoseidonVK Cached Sky Display Pipeline");
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_skyMapBakePipeline), "PoseidonVK HDR Sky Map Bake Pipeline");
+    LOG_INFO(Graphics, "Vulkan: HDR cached sky-map pipelines created");
+    return true;
+}
+
+bool EngineVK::CreateCloudComputeDescriptorLayouts()
+{
+    const std::array<VkDescriptorSetLayoutBinding, 2> generationBindings = {{
+        {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+    }};
+    VkDescriptorSetLayoutCreateInfo generationInfo{};
+    generationInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    generationInfo.bindingCount = static_cast<std::uint32_t>(generationBindings.size());
+    generationInfo.pBindings = generationBindings.data();
+    if (vkCreateDescriptorSetLayout(_device, &generationInfo, nullptr, &_cloudGenerationDescriptorSetLayout) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cloud generation compute descriptor layout creation failed");
+        return false;
+    }
+
+    const std::array<VkDescriptorSetLayoutBinding, 2> lightingBindings = {{
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+    }};
+    VkDescriptorSetLayoutCreateInfo lightingInfo{};
+    lightingInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    lightingInfo.bindingCount = static_cast<std::uint32_t>(lightingBindings.size());
+    lightingInfo.pBindings = lightingBindings.data();
+    if (vkCreateDescriptorSetLayout(_device, &lightingInfo, nullptr, &_cloudLightingDescriptorSetLayout) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cloud lighting compute descriptor layout creation failed");
+        vkDestroyDescriptorSetLayout(_device, _cloudGenerationDescriptorSetLayout, nullptr);
+        _cloudGenerationDescriptorSetLayout = VK_NULL_HANDLE;
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_cloudGenerationDescriptorSetLayout),
+                  "PoseidonVK Cloud Generation Compute Descriptor Layout");
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_cloudLightingDescriptorSetLayout),
+                  "PoseidonVK Cloud Lighting Compute Descriptor Layout");
+    return true;
+}
+
+bool EngineVK::CreateCloudComputePipelineLayouts()
+{
+    const VkDescriptorSetLayout generationLayouts[] = {_frameDescriptorSetLayout, _cloudGenerationDescriptorSetLayout};
+    VkPipelineLayoutCreateInfo generationInfo{};
+    generationInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    generationInfo.setLayoutCount = 2;
+    generationInfo.pSetLayouts = generationLayouts;
+    if (vkCreatePipelineLayout(_device, &generationInfo, nullptr, &_cloudGenerationPipelineLayout) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cloud generation compute pipeline layout creation failed");
+        return false;
+    }
+    const VkDescriptorSetLayout lightingLayouts[] = {_frameDescriptorSetLayout, _cloudLightingDescriptorSetLayout};
+    VkPipelineLayoutCreateInfo lightingInfo{};
+    lightingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    lightingInfo.setLayoutCount = 2;
+    lightingInfo.pSetLayouts = lightingLayouts;
+    if (vkCreatePipelineLayout(_device, &lightingInfo, nullptr, &_cloudLightingPipelineLayout) != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cloud lighting compute pipeline layout creation failed");
+        vkDestroyPipelineLayout(_device, _cloudGenerationPipelineLayout, nullptr);
+        _cloudGenerationPipelineLayout = VK_NULL_HANDLE;
+        return false;
+    }
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_cloudGenerationPipelineLayout),
+                  "PoseidonVK Cloud Generation Compute Pipeline Layout");
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE_LAYOUT, VulkanObjectHandle(_cloudLightingPipelineLayout),
+                  "PoseidonVK Cloud Lighting Compute Pipeline Layout");
+    return true;
+}
+
+bool EngineVK::CreateCloudComputeDescriptorSets()
+{
+    DestroyCloudComputeDescriptorResources();
+    if (!_cloudDensityVolume.view || !_cloudDistanceVolume.view || !_cloudLightVolumes[0].view || !_cloudSampler ||
+        !_cloudGenerationDescriptorSetLayout || !_cloudLightingDescriptorSetLayout)
+        return false;
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
+    }};
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 3;
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    if (vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_cloudComputeDescriptorPool) != VK_SUCCESS)
+        return false;
+
+    const VkDescriptorSetLayout layouts[] = {_cloudGenerationDescriptorSetLayout, _cloudLightingDescriptorSetLayout,
+                                              _cloudLightingDescriptorSetLayout};
+    VkDescriptorSet sets[3] = {};
+    VkDescriptorSetAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocation.descriptorPool = _cloudComputeDescriptorPool;
+    allocation.descriptorSetCount = 3;
+    allocation.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(_device, &allocation, sets) != VK_SUCCESS)
+    {
+        DestroyCloudComputeDescriptorResources();
+        return false;
+    }
+    _cloudGenerationDescriptorSet = sets[0];
+    _cloudLightingDescriptorSets = {sets[1], sets[2]};
+
+    VkDescriptorImageInfo generationImages[2] = {
+        {VK_NULL_HANDLE, _cloudDensityVolume.view, VK_IMAGE_LAYOUT_GENERAL},
+        {VK_NULL_HANDLE, _cloudDistanceVolume.view, VK_IMAGE_LAYOUT_GENERAL},
+    };
+    VkWriteDescriptorSet generationWrites[2] = {};
+    for (std::uint32_t binding = 0; binding < 2; ++binding)
+    {
+        generationWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        generationWrites[binding].dstSet = _cloudGenerationDescriptorSet;
+        generationWrites[binding].dstBinding = binding;
+        generationWrites[binding].descriptorCount = 1;
+        generationWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        generationWrites[binding].pImageInfo = &generationImages[binding];
+    }
+    vkUpdateDescriptorSets(_device, 2, generationWrites, 0, nullptr);
+
+    for (std::uint32_t i = 0; i < _cloudLightingDescriptorSets.size(); ++i)
+    {
+        VkDescriptorImageInfo densityInfo{_cloudSampler, _cloudDensityVolume.view,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo lightInfo{VK_NULL_HANDLE, _cloudLightVolumes[i].view, VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet writes[2] = {};
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _cloudLightingDescriptorSets[i], 0, 0, 1,
+                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &densityInfo, nullptr, nullptr};
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _cloudLightingDescriptorSets[i], 1, 0, 1,
+                     VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &lightInfo, nullptr, nullptr};
+        vkUpdateDescriptorSets(_device, 2, writes, 0, nullptr);
+    }
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_POOL, VulkanObjectHandle(_cloudComputeDescriptorPool),
+                  "PoseidonVK Cloud Compute Descriptor Pool");
+    return true;
+}
+
+bool EngineVK::CreateCloudComputePipelines()
+{
+    const auto destroyPipeline = [&](VkPipeline& pipeline)
+    {
+        if (pipeline)
+            vkDestroyPipeline(_device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    };
+    destroyPipeline(_cloudDensityErosionPipeline);
+    destroyPipeline(_cloudDistanceFieldPipeline);
+    destroyPipeline(_cloudLightMapPipeline);
+    const auto createPipeline = [&](const char* source, VkPipelineLayout layout, VkPipeline& pipeline, const char* name)
+    {
+        std::vector<std::uint32_t> spirv;
+        std::string error;
+        if (!CompileBootstrapShader(source, EShLangCompute, spirv, error))
+        {
+            LOG_ERROR(Graphics, "Vulkan: {} compile failed: {}", name, error);
+            return false;
+        }
+        VkShaderModuleCreateInfo moduleInfo{};
+        moduleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        moduleInfo.codeSize = spirv.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = spirv.data();
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (vkCreateShaderModule(_device, &moduleInfo, nullptr, &module) != VK_SUCCESS)
+            return false;
+        VkComputePipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        pipelineInfo.stage.module = module;
+        pipelineInfo.stage.pName = "main";
+        pipelineInfo.layout = layout;
+        const VkResult result = vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+        vkDestroyShaderModule(_device, module, nullptr);
+        if (result != VK_SUCCESS)
+        {
+            LOG_ERROR(Graphics, "Vulkan: {} creation failed: {}", name, VkResultName(result));
+            return false;
+        }
+        SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(pipeline), name);
+        return true;
+    };
+    if (!createPipeline(kCloudDensityErosionComputeShader, _cloudGenerationPipelineLayout, _cloudDensityErosionPipeline,
+                        "PoseidonVK Cloud Density Erosion Compute Pipeline") ||
+        !createPipeline(kCloudDistanceFieldComputeShader, _cloudGenerationPipelineLayout, _cloudDistanceFieldPipeline,
+                        "PoseidonVK Cloud Distance Field Compute Pipeline") ||
+        !createPipeline(kCloudLightMapComputeShader, _cloudLightingPipelineLayout, _cloudLightMapPipeline,
+                        "PoseidonVK Cloud Light Map Compute Pipeline"))
+    {
+        destroyPipeline(_cloudDensityErosionPipeline);
+        destroyPipeline(_cloudDistanceFieldPipeline);
+        destroyPipeline(_cloudLightMapPipeline);
+        return false;
+    }
     return true;
 }
 
 bool EngineVK::CreateVolumetricCloudDescriptorLayout()
 {
-    const std::array<VkDescriptorSetLayoutBinding, 5> bindings = {{
+    const std::array<VkDescriptorSetLayoutBinding, 7> bindings = {{
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
     }};
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
@@ -2835,13 +3883,14 @@ bool EngineVK::CreateVolumetricCloudPipelineLayout()
 bool EngineVK::CreateVolumetricCloudDescriptorSet()
 {
     DestroyVolumetricCloudDescriptorResources();
-    if (!_worldDepthImageView || !_cloudLighting.view || !_cloudCurrent.view || !_cloudHistory[0].view ||
+    if (!_worldDepthImageView || !_cloudDensityVolume.view || !_cloudDistanceVolume.view || !_cloudLightVolumes[0].view ||
+        !_cloudCurrent.view || !_cloudHistory[0].view ||
         !_cloudConstantsBuffer.buffer || !_volumetricCloudDescriptorSetLayout)
         return false;
 
     const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12},
     }};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2884,25 +3933,27 @@ void EngineVK::UpdateCloudDescriptorSets(std::uint32_t historyReadIndex)
     {
         const std::uint32_t historyIndex = i == 0 ? historyReadIndex : 1 - historyReadIndex;
         VkDescriptorBufferInfo constants{_cloudConstantsBuffer.buffer, 0, sizeof(vk::CloudConstantsVK)};
-        VkDescriptorImageInfo images[4] = {};
+        VkDescriptorImageInfo images[6] = {};
         images[0] = {_cloudSampler, _worldDepthImageView, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
-        images[1] = {_cloudSampler, _cloudLighting.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        images[2] = {_cloudSampler, _cloudCurrent.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        images[3] = {_cloudSampler, _cloudHistory[historyIndex].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet writes[5] = {};
+        images[1] = {_cloudSampler, _cloudDensityVolume.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[2] = {_cloudSampler, _cloudDistanceVolume.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[3] = {_cloudSampler, _cloudLightVolumes[_cloudLightVolumeReadIndex].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[4] = {_cloudSampler, _cloudCurrent.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[5] = {_cloudSampler, _cloudHistory[historyIndex].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[7] = {};
         writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _volumetricCloudDescriptorSets[i], 0, 0, 1,
                      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &constants, nullptr};
-        for (std::uint32_t binding = 1; binding < 5; ++binding)
+        for (std::uint32_t binding = 1; binding < 7; ++binding)
             writes[binding] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _volumetricCloudDescriptorSets[i], binding,
                                0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[binding - 1], nullptr, nullptr};
-        vkUpdateDescriptorSets(_device, 5, writes, 0, nullptr);
+        vkUpdateDescriptorSets(_device, 7, writes, 0, nullptr);
     }
 }
 
 bool EngineVK::CreateVolumetricCloudPipeline()
 {
-    const std::array<VkPipeline*, 4> cloudPipelines = {
-        &_volumetricCloudPipeline, &_cloudLightingPipeline, &_cloudTemporalPipeline, &_cloudCompositePipeline};
+    const std::array<VkPipeline*, 3> cloudPipelines = {
+        &_volumetricCloudPipeline, &_cloudTemporalPipeline, &_cloudCompositePipeline};
     for (VkPipeline* pipeline : cloudPipelines)
     {
         if (*pipeline)
@@ -3069,14 +4120,13 @@ bool EngineVK::CreateVolumetricCloudPipeline()
         vkDestroyShaderModule(_device, vm, nullptr);
         return pipelineResult == VK_SUCCESS;
     };
-    if (!createAdditionalPipeline(kCloudLightingFragmentShader, _cloudLightingRenderPass, _cloudLightingPipeline, false) ||
-        !createAdditionalPipeline(kCloudTemporalFragmentShader, _cloudTemporalRenderPass, _cloudTemporalPipeline, false) ||
+    if (!createAdditionalPipeline(kCloudTemporalFragmentShader, _cloudTemporalRenderPass, _cloudTemporalPipeline, false) ||
         !createAdditionalPipeline(kCloudCompositeFragmentShader, _cloudCompositeRenderPass, _cloudCompositePipeline, true))
     {
         LOG_ERROR(Graphics, "Vulkan: temporal cloud pass pipeline creation failed");
         return false;
     }
-    LOG_INFO(Graphics, "Vulkan: fixed-world cloud lighting, raymarch, temporal, and composite pipelines created");
+    LOG_INFO(Graphics, "Vulkan: persistent 3D cloud field, raymarch, temporal, and composite pipelines created");
     return true;
 }
 
@@ -3089,6 +4139,39 @@ void EngineVK::DestroyVolumetricCloudDescriptorResources()
         vkDestroyDescriptorPool(_device, _volumetricCloudDescriptorPool, nullptr);
         _volumetricCloudDescriptorPool = VK_NULL_HANDLE;
     }
+}
+
+void EngineVK::DestroyCloudComputeDescriptorResources()
+{
+    _cloudGenerationDescriptorSet = VK_NULL_HANDLE;
+    _cloudLightingDescriptorSets = {};
+    if (_device && _cloudComputeDescriptorPool)
+        vkDestroyDescriptorPool(_device, _cloudComputeDescriptorPool, nullptr);
+    _cloudComputeDescriptorPool = VK_NULL_HANDLE;
+}
+
+void EngineVK::DestroyCloudComputePipelineResources()
+{
+    const std::array<VkPipeline*, 3> pipelines = {
+        &_cloudDensityErosionPipeline, &_cloudDistanceFieldPipeline, &_cloudLightMapPipeline};
+    for (VkPipeline* pipeline : pipelines)
+    {
+        if (_device && *pipeline)
+            vkDestroyPipeline(_device, *pipeline, nullptr);
+        *pipeline = VK_NULL_HANDLE;
+    }
+    if (_device && _cloudGenerationPipelineLayout)
+        vkDestroyPipelineLayout(_device, _cloudGenerationPipelineLayout, nullptr);
+    _cloudGenerationPipelineLayout = VK_NULL_HANDLE;
+    if (_device && _cloudLightingPipelineLayout)
+        vkDestroyPipelineLayout(_device, _cloudLightingPipelineLayout, nullptr);
+    _cloudLightingPipelineLayout = VK_NULL_HANDLE;
+    if (_device && _cloudGenerationDescriptorSetLayout)
+        vkDestroyDescriptorSetLayout(_device, _cloudGenerationDescriptorSetLayout, nullptr);
+    _cloudGenerationDescriptorSetLayout = VK_NULL_HANDLE;
+    if (_device && _cloudLightingDescriptorSetLayout)
+        vkDestroyDescriptorSetLayout(_device, _cloudLightingDescriptorSetLayout, nullptr);
+    _cloudLightingDescriptorSetLayout = VK_NULL_HANDLE;
 }
 
 void EngineVK::DestroyVolumetricCloudPipelineLayout()
@@ -3866,6 +4949,101 @@ void EngineVK::DestroyFrameDescriptorResources()
     }
 }
 
+void EngineVK::UpdateSkyMapInvalidation()
+{
+    std::size_t index = 0;
+    const auto append = [&](float value) { _skyMapRequestedInputs[index++] = value; };
+    // Camera matrices deliberately do not participate: this is a world-space
+    // environment map and must survive ordinary camera movement.
+    append(_lastFrameConstants.lightingParams[0]);
+    for (float value : _lastFrameConstants.sunDirection) append(value);
+    for (float value : _lastFrameConstants.fogColor) append(value);
+    for (float value : _lastFrameConstants.cloudWeather) append(value);
+    // Geometry changes alter weather coverage, but cloudTime is animation and
+    // belongs to the cloud subsystem rather than forcing a sky-map bake.
+    for (std::size_t i = 0; i < 3; ++i) append(_lastFrameConstants.cloudGeometry[i]);
+    for (float value : _lastFrameConstants.moonDirection) append(value);
+    for (float value : _lastFrameConstants.moonUpAndPhase) append(value);
+    for (const auto& row : _lastFrameConstants.starsOrientation)
+        for (float value : row) append(value);
+    for (float value : _lastFrameConstants.skyVisibility) append(value);
+    while (index < _skyMapRequestedInputs.size()) _skyMapRequestedInputs[index++] = 0.0f;
+
+    if (!_skyMapValid)
+    {
+        _skyMapDirty = true;
+        return;
+    }
+    constexpr float kSkyCacheEpsilon = 1.0e-4f;
+    for (std::size_t i = 0; i < _skyMapRequestedInputs.size(); ++i)
+    {
+        if (std::abs(_skyMapRequestedInputs[i] - _skyMapCachedInputs[i]) > kSkyCacheEpsilon)
+        {
+            _skyMapDirty = true;
+            return;
+        }
+    }
+}
+
+bool EngineVK::RecordSkyMapBake(VkCommandBuffer commandBuffer)
+{
+    if (!_skyMapDirty)
+        return true;
+    if (!_skyMap.image || !_skyMapFramebuffer || !_skyMapRenderPass || !_skyMapBakePipeline || !_frameDescriptorSet)
+    {
+        LOG_ERROR(Graphics, "Vulkan: cannot bake sky map; persistent sky resources are incomplete");
+        return false;
+    }
+
+    VkImageMemoryBarrier toColor{};
+    toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toColor.oldLayout = _skyMapLayout;
+    toColor.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toColor.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toColor.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toColor.image = _skyMap.image;
+    toColor.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toColor.subresourceRange.levelCount = 1;
+    toColor.subresourceRange.layerCount = 1;
+    const VkPipelineStageFlags sourceStage = _skyMapLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                 ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                                 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    toColor.srcAccessMask = _skyMapLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT : 0;
+    toColor.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffer, sourceStage, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &toColor);
+
+    BeginDebugLabel(commandBuffer, "PoseidonVK HDR Sky Map Bake", 0.18f, 0.32f, 0.80f);
+    VkClearValue clear{};
+    VkRenderPassBeginInfo passInfo{};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    passInfo.renderPass = _skyMapRenderPass;
+    passInfo.framebuffer = _skyMapFramebuffer;
+    passInfo.renderArea.extent = {_skyMap.width, _skyMap.height};
+    passInfo.clearValueCount = 1;
+    passInfo.pClearValues = &clear;
+    vkCmdBeginRenderPass(commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyMapBakePipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyMapBakePipelineLayout, 0, 1,
+                            &_frameDescriptorSet, 0, nullptr);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(commandBuffer);
+    EndDebugLabel(commandBuffer);
+
+    VkImageMemoryBarrier toSample = toColor;
+    toSample.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toSample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toSample.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toSample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &toSample);
+    _skyMapLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    _skyMapCachedInputs = _skyMapRequestedInputs;
+    _skyMapDirty = false;
+    _skyMapValid = true;
+    return true;
+}
+
 bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
 {
     if (imageIndex >= _commandBuffers.size() || imageIndex >= _framebuffers.size())
@@ -3898,6 +5076,15 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         vkCmdResetQueryPool(commandBuffer, _gpuTimingQueryPool, 0, 11);
         vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, _gpuTimingQueryPool, 0);
     }
+
+    // Bake before opening the world pass so the cached HDR image is available
+    // to the sky draw and remains independent from scene depth/world geometry.
+    if (ProceduralSkyActive() && !RecordSkyMapBake(commandBuffer))
+        return false;
+
+    // Compute writes compact VkDrawIndexedIndirectCommand streams before the
+    // render pass.  The explicit compute->indirect barrier lives in this call.
+    RecordGpuSceneCull(commandBuffer);
 
     BeginDebugLabel(commandBuffer, WorldCompositionActive() ? "PoseidonVK World Render Pass"
                                                              : "PoseidonVK Direct Render Pass",
@@ -3954,10 +5141,11 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
     if (ProceduralSkyActive())
     {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _proceduralSkyPipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipelineLayout, 0, 1,
-                                &_frameDescriptorSet, 0, nullptr);
+        VkDescriptorSet skySets[] = {_frameDescriptorSet, _skyMapDescriptorSet};
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyMapPipelineLayout, 0, 2,
+                                skySets, 0, nullptr);
         const float hdrEnabled = _hdrEnabled ? 1.0f : 0.0f;
-        vkCmdPushConstants(commandBuffer, _pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(hdrEnabled),
+        vkCmdPushConstants(commandBuffer, _skyMapPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(hdrEnabled),
                            &hdrEnabled);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     }
@@ -3978,6 +5166,96 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 0, 1,
                                     &_frameDescriptorSet, 0, nullptr);
+        }
+
+        // GPU scene batches are constructed only across identical mesh/material
+        // state (and never reordered in transparent/cockpit groups).  Compute
+        // compacts visible instances into each batch's indirect segment.
+        bool hasGpuBatches = false;
+        if (_gpuSceneEnabled)
+        {
+            for (const vk::GpuSceneBatchVK& batch : _gpuSceneBatches)
+            {
+                if (batch.sceneGroup == static_cast<std::uint32_t>(group))
+                {
+                    hasGpuBatches = true;
+                    break;
+                }
+            }
+        }
+        if (hasGpuBatches)
+        {
+            for (const vk::GpuSceneBatchVK& batch : _gpuSceneBatches)
+            {
+                if (batch.sceneGroup != static_cast<std::uint32_t>(group) || batch.instanceCount == 0)
+                    continue;
+                const vk::SceneDrawCommandVK& command = _lastSceneDrawCommands[batch.sourceCommandIndex];
+                const vk::DrawConstantsVK& draw = _lastDrawConstants[command.drawIndex];
+                vk::PipelineKeyVK key;
+                key.cull = static_cast<render::CullMode>(draw.cull);
+                key.frontFace = static_cast<render::FrontFaceMode>(draw.frontFace);
+                key.depth = group == SceneGroup::WorldLate ? render::DepthMode::ReadOnly
+                                                           : static_cast<render::DepthMode>(draw.depth);
+                key.blend = static_cast<render::BlendMode>(draw.blend);
+                key.surface = static_cast<render::SurfaceMode>(draw.surface);
+                VkPipeline pipeline = scenePipelineCache.Get(key);
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  pipeline ? pipeline : fallbackScenePipeline);
+
+                TextureVK* texture = draw.textureIds[0] ? ResolveTexture(draw.textureIds[0]) : nullptr;
+                VkDescriptorSet textureSet = texture ? texture->GetDescriptorSet(draw.samplerFilter, draw.samplerClamp)
+                                                     : VK_NULL_HANDLE;
+                if (!textureSet && _fallbackWhiteTexture)
+                    textureSet = _fallbackWhiteTexture->GetDescriptorSet(draw.samplerFilter, draw.samplerClamp);
+                if (textureSet)
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 1, 1,
+                                            &textureSet, 0, nullptr);
+                TextureVK* texture1 = draw.textureIds[1] ? ResolveTexture(draw.textureIds[1]) : nullptr;
+                const auto shaderFamily = static_cast<render::ShaderFamily>(draw.shader);
+                const std::uint32_t clamp1 = (shaderFamily == render::ShaderFamily::Detail ||
+                                              shaderFamily == render::ShaderFamily::Grass)
+                                                 ? 0u
+                                                 : draw.samplerClamp;
+                VkDescriptorSet textureSet1 = texture1 ? texture1->GetDescriptorSet(draw.samplerFilter, clamp1)
+                                                        : VK_NULL_HANDLE;
+                if (!textureSet1 && _fallbackWhiteTexture)
+                    textureSet1 = _fallbackWhiteTexture->GetDescriptorSet(draw.samplerFilter, clamp1);
+                if (textureSet1)
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 2, 1,
+                                            &textureSet1, 0, nullptr);
+                const vk::MeshResourcesVK* mesh = _meshRegistry.Resolve(command.meshId);
+                if (!mesh || !mesh->IsValid())
+                    mesh = _meshRegistry.Resolve(_bootstrapMeshId);
+                if (!mesh || !mesh->IsValid())
+                    continue;
+                VkBuffer vertexBuffer = mesh->vertexBuffer;
+                const VkDeviceSize vertexOffset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &vertexOffset);
+                vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+                const vk::ScenePushConstantsVK constants =
+                    vk::BuildScenePushConstants(vk::BuildIdentityScenePushConstants().world, true, 0);
+                vkCmdPushConstants(commandBuffer, _scenePipelineLayout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   vk::kScenePushConstantsSize, &constants);
+                const VkDeviceSize indirectOffset =
+                    static_cast<VkDeviceSize>(batch.indirectOffset) * sizeof(VkDrawIndexedIndirectCommand);
+                if (_gpuSceneCapabilities.drawIndirectCount)
+                {
+                    vkCmdDrawIndexedIndirectCount(commandBuffer, _gpuSceneIndirectBuffer.buffer, indirectOffset,
+                                                  _gpuSceneCountBuffer.buffer,
+                                                  static_cast<VkDeviceSize>(batch.countOffset) * sizeof(std::uint32_t),
+                                                  batch.instanceCount, sizeof(VkDrawIndexedIndirectCommand));
+                }
+                else
+                {
+                    // Fixed-count fallback is valid because vkCmdFillBuffer
+                    // zeroes every slot before compute; invisible slots carry
+                    // indexCount=0 and therefore rasterise nothing.
+                    vkCmdDrawIndexedIndirect(commandBuffer, _gpuSceneIndirectBuffer.buffer, indirectOffset,
+                                             batch.instanceCount, sizeof(VkDrawIndexedIndirectCommand));
+                }
+            }
+            return;
         }
 
         const auto& groupCommands = _sceneCommandGroups[static_cast<std::uint32_t>(group)];
@@ -4126,7 +5404,8 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                                                  : vk::BuildIdentityScenePushConstants().world;
                 const vk::ScenePushConstantsVK constants =
                     vk::BuildScenePushConstants(drawWorld, true, command.drawIndex);
-                vkCmdPushConstants(commandBuffer, _scenePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                vkCmdPushConstants(commandBuffer, _scenePipelineLayout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    vk::kScenePushConstantsSize, &constants);
 
                 // Clamp the draw's index range against the resolved mesh's actual
@@ -4169,7 +5448,8 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
             if (mesh && mesh->indexBuffer)
                 vkCmdBindIndexBuffer(commandBuffer, mesh->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
             const vk::ScenePushConstantsVK sceneConstants = vk::BuildIdentityScenePushConstants();
-            vkCmdPushConstants(commandBuffer, _scenePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+            vkCmdPushConstants(commandBuffer, _scenePipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                vk::kScenePushConstantsSize, &sceneConstants);
             vkCmdDrawIndexed(commandBuffer, kSceneQuadIndexCount, 1, 0, 0, 0);
         }
@@ -4188,18 +5468,25 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         recordSceneDraws(SceneGroup::Other);
         if (_gpuTimingQueryPool)
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _gpuTimingQueryPool, 4);
-        // End the world pass before sampling its depth. The former cloud
-        // subpass was a full-resolution input-attachment prototype; cloud work
-        // now owns explicit low-resolution attachments and history barriers.
+        // The world render pass retains two legacy attachment-transition
+        // subpasses. They no longer draw cloud work, but must still be entered
+        // before ending the pass so the declared final layouts are valid.
+        vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdEndRenderPass(commandBuffer);
         if (_gpuTimingQueryPool)
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _gpuTimingQueryPool, 5);
-        if (_volumetricCloudsEnabled && _volumetricCloudPipeline && _cloudLightingPipeline && _cloudTemporalPipeline &&
-            _cloudCompositePipeline && _volumetricCloudDescriptorSets[0] && _hasFrameConstants)
+        if (_volumetricCloudsEnabled && _volumetricCloudPipeline && _cloudTemporalPipeline &&
+            _cloudCompositePipeline && _volumetricCloudDescriptorSets[0] && _cloudGenerationDescriptorSet &&
+            _cloudLightingDescriptorSets[0] && _cloudDensityErosionPipeline && _cloudDistanceFieldPipeline &&
+            _cloudLightMapPipeline && _hasFrameConstants)
         {
             BeginDebugLabel(commandBuffer, "PoseidonVK Temporal Volumetric Clouds", 0.85f, 0.85f, 0.95f);
             const std::uint32_t historyRead = _cloudHistoryCurrentIndex;
             const std::uint32_t historyWrite = 1 - historyRead;
+            RecordCloudVolumeCompute(commandBuffer);
+            // Bind the light-volume read side only after the compute write has
+            // crossed its compute-to-fragment visibility barrier.
             UpdateCloudDescriptorSets(historyRead);
             const auto recordCloudPass = [&](VkRenderPass pass, VkFramebuffer framebuffer, VkExtent2D extent,
                                              VkPipeline pipeline, VkDescriptorSet cloudSet)
@@ -4209,6 +5496,14 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 passInfo.renderPass = pass;
                 passInfo.framebuffer = framebuffer;
                 passInfo.renderArea.extent = extent;
+                VkClearValue clear{};
+                if (pass == _cloudRaymarchRenderPass)
+                {
+                    // Cloud fragments discard where the volume is empty. Clear
+                    // those pixels so a previous frame cannot ghost into view.
+                    passInfo.clearValueCount = 1;
+                    passInfo.pClearValues = &clear;
+                }
                 vkCmdBeginRenderPass(commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 VkDescriptorSet sets[] = {_frameDescriptorSet, cloudSet};
@@ -4218,8 +5513,6 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 vkCmdEndRenderPass(commandBuffer);
             };
             const VkExtent2D cloudExtent{_cloudCurrent.width, _cloudCurrent.height};
-            recordCloudPass(_cloudLightingRenderPass, _cloudLightingFramebuffer, cloudExtent, _cloudLightingPipeline,
-                            _volumetricCloudDescriptorSets[0]);
             recordCloudPass(_cloudRaymarchRenderPass, _cloudRaymarchFramebuffer, cloudExtent, _volumetricCloudPipeline,
                             _volumetricCloudDescriptorSets[0]);
             recordCloudPass(_cloudTemporalRenderPass, _cloudTemporalFramebuffers[historyWrite], cloudExtent,
@@ -4321,15 +5614,15 @@ void EngineVK::DestroySwapchain()
         vkDestroyPipeline(_device, _proceduralSkyPipeline, nullptr);
         _proceduralSkyPipeline = VK_NULL_HANDLE;
     }
+    if (_skyMapBakePipeline)
+    {
+        vkDestroyPipeline(_device, _skyMapBakePipeline, nullptr);
+        _skyMapBakePipeline = VK_NULL_HANDLE;
+    }
     if (_volumetricCloudPipeline)
     {
         vkDestroyPipeline(_device, _volumetricCloudPipeline, nullptr);
         _volumetricCloudPipeline = VK_NULL_HANDLE;
-    }
-    if (_cloudLightingPipeline)
-    {
-        vkDestroyPipeline(_device, _cloudLightingPipeline, nullptr);
-        _cloudLightingPipeline = VK_NULL_HANDLE;
     }
     if (_cloudTemporalPipeline)
     {
@@ -4352,6 +5645,7 @@ void EngineVK::DestroySwapchain()
         _eyeAdaptationPipeline = VK_NULL_HANDLE;
     }
     DestroyVolumetricCloudDescriptorResources();
+    DestroyCloudComputeDescriptorResources();
     DestroyWorldCompositeDescriptorResources();
     DestroyEyeAdaptationDescriptorResources();
 
@@ -4455,6 +5749,31 @@ void EngineVK::DestroyDrawConstantsBuffer()
 {
     vk::DestroyBuffer(_device, _drawConstantsBuffer);
     _drawConstantsCapacity = 0;
+}
+
+void EngineVK::DestroyGpuSceneResources()
+{
+    _gpuSceneEnabled = false;
+    _gpuSceneInstances.clear();
+    _gpuSceneBatches.clear();
+    vk::DestroyBuffer(_device, _gpuSceneInstancesBuffer);
+    vk::DestroyBuffer(_device, _gpuSceneIndirectBuffer);
+    vk::DestroyBuffer(_device, _gpuSceneCountBuffer);
+    _gpuSceneInstanceCapacity = 0;
+    _gpuSceneBatchCapacity = 0;
+    if (_gpuSceneCullPipeline)
+        vkDestroyPipeline(_device, _gpuSceneCullPipeline, nullptr);
+    if (_gpuScenePipelineLayout)
+        vkDestroyPipelineLayout(_device, _gpuScenePipelineLayout, nullptr);
+    if (_gpuSceneDescriptorPool)
+        vkDestroyDescriptorPool(_device, _gpuSceneDescriptorPool, nullptr);
+    if (_gpuSceneDescriptorSetLayout)
+        vkDestroyDescriptorSetLayout(_device, _gpuSceneDescriptorSetLayout, nullptr);
+    _gpuSceneCullPipeline = VK_NULL_HANDLE;
+    _gpuScenePipelineLayout = VK_NULL_HANDLE;
+    _gpuSceneDescriptorPool = VK_NULL_HANDLE;
+    _gpuSceneDescriptorSet = VK_NULL_HANDLE;
+    _gpuSceneDescriptorSetLayout = VK_NULL_HANDLE;
 }
 
 void EngineVK::DestroyBootstrapVertexBuffer()
@@ -4573,6 +5892,7 @@ bool EngineVK::RecreateSwapchain()
     DestroySwapchain();
     const bool recreated = CreateSwapchain() &&
                             (!_volumetricCloudsEnabled || CreateVolumetricCloudDescriptorSet()) &&
+                            (!_volumetricCloudsEnabled || CreateCloudComputeDescriptorSets()) &&
                             (!_temporalExposureEnabled || CreateEyeAdaptationDescriptorSet()) &&
                             (!WorldCompositionActive() || CreateWorldCompositeDescriptorSet()) &&
                             CreateBootstrapPipeline() && CreateScenePipeline() && CreateProceduralSkyPipeline() &&
@@ -4695,6 +6015,7 @@ void EngineVK::Shutdown()
             _imageAvailable = VK_NULL_HANDLE;
         }
         DestroySwapchain();
+        DestroySkyMapResources();
         if (_commandPool)
         {
             vkDestroyCommandPool(_device, _commandPool, nullptr);
@@ -4705,12 +6026,16 @@ void EngineVK::Shutdown()
             vkDestroyPipelineLayout(_device, _pipelineLayout, nullptr);
             _pipelineLayout = VK_NULL_HANDLE;
         }
+        DestroySkyMapPipelineLayout();
+        DestroySkyMapDescriptorResources();
+        DestroyCloudComputePipelineResources();
         DestroyVolumetricCloudPipelineLayout();
         DestroyWorldCompositePipelineLayout();
         DestroyEyeAdaptationPipelineLayout();
         DestroyScenePipelineLayout();
         DestroyFrameDescriptorResources();
         DestroyTextureDescriptorResources();
+        DestroyGpuSceneResources();
         DestroyFrameConstantsBuffer();
         DestroyCloudConstantsBuffer();
         DestroyDrawConstantsBuffer();

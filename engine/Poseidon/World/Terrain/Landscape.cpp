@@ -545,6 +545,11 @@ void Weather::SetOvercast(Landscape* land, float overcast)
     }
 }
 
+float Weather::GetOvercast() const
+{
+    return _overcastSetClouds < 0.0f ? 0.0f : _overcastSetClouds;
+}
+
 void Weather::SetFog(Landscape* land, float fog)
 {
     saturate(fog, 0, 1);

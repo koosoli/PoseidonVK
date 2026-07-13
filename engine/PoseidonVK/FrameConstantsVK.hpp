@@ -39,6 +39,12 @@ struct FrameConstantsVK
     float cloudOrigin[4] = {};    // absolute world-space camera position
     float wind[4] = {};           // effective world-space weather velocity
     float windOffset[4] = {};     // accumulated world-space weather displacement
+    float cloudWeather[4] = {};   // overcast, rain, density, brightness
+    float cloudGeometry[4] = {};  // base, top, extent, simulation time
+    float moonDirection[4] = {};
+    float moonUpAndPhase[4] = {}; // xyz up, w phase
+    float starsOrientation[3][4] = {};
+    float skyVisibility[4] = {};  // stars, sky-through, cloud seed, reserved
 };
 
 static_assert(sizeof(GfxMatrix) == 64);
@@ -69,7 +75,13 @@ static_assert(offsetof(FrameConstantsVK, camPos) == 1168);
     static_assert(offsetof(FrameConstantsVK, cloudOrigin) == 1216);
     static_assert(offsetof(FrameConstantsVK, wind) == 1232);
     static_assert(offsetof(FrameConstantsVK, windOffset) == 1248);
-    static_assert(sizeof(FrameConstantsVK) == 1264);
+    static_assert(offsetof(FrameConstantsVK, cloudWeather) == 1264);
+    static_assert(offsetof(FrameConstantsVK, cloudGeometry) == 1280);
+    static_assert(offsetof(FrameConstantsVK, moonDirection) == 1296);
+    static_assert(offsetof(FrameConstantsVK, moonUpAndPhase) == 1312);
+    static_assert(offsetof(FrameConstantsVK, starsOrientation) == 1328);
+    static_assert(offsetof(FrameConstantsVK, skyVisibility) == 1376);
+    static_assert(sizeof(FrameConstantsVK) == 1392);
 
 inline float ChannelToFloat(std::uint32_t value) noexcept
 {
@@ -165,6 +177,27 @@ inline FrameConstantsVK BuildFrameConstants(const render::frame::Frame& frame) n
     constants.wind[0] = frame.wind[0];
     constants.wind[1] = frame.wind[1];
     constants.wind[2] = frame.wind[2];
+    constants.cloudWeather[0] = frame.atmosphere.overcast;
+    constants.cloudWeather[1] = frame.atmosphere.rainDensity;
+    constants.cloudWeather[2] = frame.atmosphere.cloudDensity;
+    constants.cloudWeather[3] = frame.atmosphere.cloudBrightness;
+    constants.cloudGeometry[0] = frame.atmosphere.cloudBase;
+    constants.cloudGeometry[1] = frame.atmosphere.cloudTop;
+    constants.cloudGeometry[2] = frame.atmosphere.cloudExtent;
+    constants.cloudGeometry[3] = frame.atmosphere.cloudTime;
+    constants.moonDirection[0] = frame.atmosphere.moonDirection[0];
+    constants.moonDirection[1] = frame.atmosphere.moonDirection[1];
+    constants.moonDirection[2] = frame.atmosphere.moonDirection[2];
+    constants.moonUpAndPhase[0] = frame.atmosphere.moonUp[0];
+    constants.moonUpAndPhase[1] = frame.atmosphere.moonUp[1];
+    constants.moonUpAndPhase[2] = frame.atmosphere.moonUp[2];
+    constants.moonUpAndPhase[3] = frame.atmosphere.moonPhase;
+    for (std::size_t row = 0; row < 3; ++row)
+        for (std::size_t column = 0; column < 3; ++column)
+            constants.starsOrientation[row][column] = frame.atmosphere.starsOrientation[row][column];
+    constants.skyVisibility[0] = frame.atmosphere.starsVisibility;
+    constants.skyVisibility[1] = frame.atmosphere.skyThrough;
+    constants.skyVisibility[2] = static_cast<float>(frame.atmosphere.cloudSeed);
 
     return constants;
 }

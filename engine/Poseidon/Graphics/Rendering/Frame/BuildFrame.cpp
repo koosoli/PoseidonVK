@@ -73,6 +73,7 @@ Frame BuildFrame(const SceneInputs& s)
     f.fogStart = s.fogStart;
     f.fogEnd = s.fogEnd;
     f.fogColorRGBA = s.fogColorRGBA;
+    f.atmosphere = s.atmosphere;
 
     // Carry forward the per-frame GL error delta.  ValidateFrame
     // turns non-zero into a violation.

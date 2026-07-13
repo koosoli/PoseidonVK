@@ -155,11 +155,13 @@ TEST_CASE("Vulkan temporal cloud shaders compile under Vulkan GLSL rules", "[vul
 {
     GlslangInit init;
     const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
-    const std::array<std::pair<const char*, EShLanguage>, 4> shaders = {{
+    const std::array<std::pair<const char*, EShLanguage>, 6> shaders = {{
         {"volumetric_clouds.vert.glsl", EShLangVertex},
         {"volumetric_clouds.frag.glsl", EShLangFragment},
-        {"cloud_lighting.frag.glsl", EShLangFragment},
         {"cloud_temporal.frag.glsl", EShLangFragment},
+        {"cloud_density_erosion.comp.glsl", EShLangCompute},
+        {"cloud_distance_field.comp.glsl", EShLangCompute},
+        {"cloud_light_map.comp.glsl", EShLangCompute},
     }};
     for (const auto& [name, stage] : shaders)
     {

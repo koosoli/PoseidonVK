@@ -55,8 +55,8 @@ CompileOutcome CompileVulkanGLSL(const std::string& source, EShLanguage stage)
     const char* strings[] = {source.c_str()};
     shader.setStrings(strings, 1);
     shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, 100);
-    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
-    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_1);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_3);
 
     const EShMessages messages = static_cast<EShMessages>(EShMsgVulkanRules | EShMsgSpvRules);
     if (!shader.parse(GetDefaultResources(), 450, false, messages))
@@ -137,7 +137,8 @@ TEST_CASE("Vulkan scene vertex shader reads per-draw constants from the SSBO", "
           std::string::npos);
     CHECK(vertexSource.find("mat4 world;") != std::string::npos);
     CHECK(vertexSource.find("uint drawIndex;") != std::string::npos);
-    CHECK(vertexSource.find("min(draw.drawIndex, drawConstants.draws.length() - 1u)") != std::string::npos);
+    CHECK(vertexSource.find("gl_BaseInstanceARB") != std::string::npos);
+    CHECK(vertexSource.find("min(selectedDrawIndex, drawConstants.draws.length() - 1u)") != std::string::npos);
     CHECK(vertexSource.find("drawConstants.draws[drawIndex].world") != std::string::npos);
 }
 
@@ -166,6 +167,22 @@ TEST_CASE("Vulkan scene shaders drive fog from the uploaded frame constants", "[
     CHECK(fragmentSource.find("layout(location = 4) in float vFogFactor;") != std::string::npos);
     CHECK(fragmentSource.find("frame.fogColor.rgb") != std::string::npos);
     CHECK(fragmentSource.find("mix(frame.fogColor.rgb, baseColor, vFogFactor)") != std::string::npos);
+}
+
+TEST_CASE("Vulkan GPU scene cull shader compiles under Vulkan GLSL rules", "[vulkan][scene-shaders][gpu-scene]")
+{
+    GlslangInit init;
+    const std::filesystem::path shaderDir = RepoRoot() / "engine" / "PoseidonVK" / "Shaders";
+    const CompileOutcome compute = CompileVulkanGLSL(ReadTextFile(shaderDir / "scene_cull.comp.glsl"), EShLangCompute);
+    CAPTURE(compute.info);
+    REQUIRE(compute.success);
+    REQUIRE(compute.spirvWordCount > 0);
+
+    std::string gpuVertex = ReadTextFile(shaderDir / "scene.vert.glsl");
+    gpuVertex.insert(gpuVertex.find('\n') + 1, "#define POSEIDON_GPU_SCENE 1\n");
+    const CompileOutcome vertex = CompileVulkanGLSL(gpuVertex, EShLangVertex);
+    CAPTURE(vertex.info);
+    REQUIRE(vertex.success);
 }
 
 TEST_CASE("Vulkan scene fragment shader applies GL33 night-eye parity", "[vulkan][scene-shaders]")

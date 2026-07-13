@@ -157,6 +157,7 @@ VkResult CreateImage2D(VkPhysicalDevice physicalDevice, VkDevice device,
     out.format = format;
     out.width = width;
     out.height = height;
+    out.depth = 1;
     out.mipLevels = mipLevels;
 
     VkImageCreateInfo ii{};
@@ -223,6 +224,124 @@ VkResult CreateImage2D(VkPhysicalDevice physicalDevice, VkDevice device,
     r = vkCreateImageView(device, &vi, nullptr, &out.view);
     if (r != VK_SUCCESS) { DestroyImage(device, out); return r; }
 
+    return VK_SUCCESS;
+}
+
+VkResult CreateDeviceLocalBuffer(VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceSize size,
+                                 VkBufferUsageFlags usage, BufferVK& out)
+{
+    DestroyBuffer(device, out);
+    out.size = size;
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkResult result = vkCreateBuffer(device, &bufferInfo, nullptr, &out.buffer);
+    if (result != VK_SUCCESS)
+    {
+        DestroyBuffer(device, out);
+        return result;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, out.buffer, &requirements);
+    const uint32_t memoryType = FindMemoryType(physicalDevice, requirements.memoryTypeBits,
+                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memoryType == kInvalidMemoryType)
+    {
+        DestroyBuffer(device, out);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    result = vkAllocateMemory(device, &allocation, nullptr, &out.memory);
+    if (result != VK_SUCCESS)
+    {
+        DestroyBuffer(device, out);
+        return result;
+    }
+    result = vkBindBufferMemory(device, out.buffer, out.memory, 0);
+    if (result != VK_SUCCESS)
+    {
+        DestroyBuffer(device, out);
+        return result;
+    }
+    return VK_SUCCESS;
+}
+
+VkResult CreateImage3D(VkPhysicalDevice physicalDevice, VkDevice device,
+                       uint32_t width, uint32_t height, uint32_t depth,
+                       VkFormat format, VkImageUsageFlags usage,
+                       VkMemoryPropertyFlags memProps, ImageVK& out)
+{
+    DestroyImage(device, out);
+    out.format = format;
+    out.width = width;
+    out.height = height;
+    out.depth = depth;
+    out.mipLevels = 1;
+
+    VkImageCreateInfo ii{};
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.imageType = VK_IMAGE_TYPE_3D;
+    ii.format = format;
+    ii.extent = {width, height, depth};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = usage;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkResult result = vkCreateImage(device, &ii, nullptr, &out.image);
+    if (result != VK_SUCCESS)
+        return result;
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, out.image, &requirements);
+    const uint32_t memoryType = FindMemoryType(physicalDevice, requirements.memoryTypeBits, memProps);
+    if (memoryType == kInvalidMemoryType)
+    {
+        DestroyImage(device, out);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    result = vkAllocateMemory(device, &allocation, nullptr, &out.memory);
+    if (result != VK_SUCCESS)
+    {
+        DestroyImage(device, out);
+        return result;
+    }
+    result = vkBindImageMemory(device, out.image, out.memory, 0);
+    if (result != VK_SUCCESS)
+    {
+        DestroyImage(device, out);
+        return result;
+    }
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = out.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    viewInfo.format = format;
+    viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    result = vkCreateImageView(device, &viewInfo, nullptr, &out.view);
+    if (result != VK_SUCCESS)
+    {
+        DestroyImage(device, out);
+        return result;
+    }
     return VK_SUCCESS;
 }
 
@@ -314,7 +433,7 @@ void DestroyImage(VkDevice device, ImageVK& img)
         img.memory = VK_NULL_HANDLE;
     }
     img.format = VK_FORMAT_UNDEFINED;
-    img.width = img.height = img.mipLevels = 0;
+    img.width = img.height = img.depth = img.mipLevels = 0;
 }
 
 } // namespace Poseidon::vk

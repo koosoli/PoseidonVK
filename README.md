@@ -31,10 +31,12 @@ scene with known gaps (see Phase 2 below).
 
 The Vulkan backend has an opt-in world-composition path for local smoke tests:
 
-- Procedural clear sky with a high-radiance sun and atmospheric halo.
-- Fixed absolute-world, half-resolution volumetric cloud volume with accumulated
-  landscape wind displacement, a precomputed light cache, temporal
-  reconstruction, and matching terrain cloud shadows. Enable it with
+- Cached HDR sky map driven by the simulation's sun, moon phase, star rotation,
+  fog, and weather state. It includes a portable deterministic night-star field
+  rather than importing an unlicensed reference catalogue.
+- Persistent absolute-world 3D cloud density, distance, and double-buffered
+  light volumes with simulation-time wind displacement, half-resolution
+  raymarching, temporal reconstruction, and terrain cloud shadows. Enable it with
   `POSEIDON_VK_VOLUMETRIC_CLOUDS=1`; it retains cockpit, binder, HUD, and other
   legacy display-referred content after world composition.
 - Isolated FP16 world target, ACES tone mapping, bloom, and stable angular eye
@@ -213,20 +215,22 @@ smoke-testable.
 ### Phase 5 - Modern Visual Base
 
 - [ ] Improve cascaded-shadow split distribution, transition blending, filtering, and bias.
-- [/] Implement a procedural clear sky, high-radiance sun, and atmospheric halo
-  for the opt-in Vulkan path. Rayleigh/Mie atmosphere, aerial perspective,
-  environment lighting, moon/stars, and a conventional instanced/billboard star
-  fallback remain outstanding.
+- [x] Implement a cached HDR sky map for the opt-in Vulkan path, including a
+  high-radiance sun, atmosphere/horizon treatment, moon phase and halo, and a
+  portable star-field fallback driven by `LightSun` celestial state. Physical
+  atmosphere LUTs, aerial perspective, and environment-lighting integration
+  remain outstanding.
 - [ ] Add an MSAA-ready depth-and-normal prepass with matching alpha-cutout behavior.
 - [ ] Add Hi-Z, SSAO/GTAO, and other sampleable-depth/normal consumers.
 - [ ] Add Gerstner-wave water, soft shore/coast treatment, refraction, and sky/environment
   reflection in dependency order.
 - [ ] Add Forward+ clustered lighting after HDR; do not block water on the full lighting
   implementation.
-- [x] Add opt-in fixed-world Vulkan volumetric clouds: half-resolution
-  light-cache/raymarch/reconstruction/composite passes, accumulated landscape
-  wind, temporal history invalidation on volume movement, and terrain shadows.
-  Weather controls, rain, external noise assets, and particle/weather
+- [x] Add opt-in persistent Vulkan volumetric clouds: simulation-driven 3D
+  density and distance fields, double-buffered light volumes, half-resolution
+  raymarch/reconstruction/composite passes, simulation-time wind, history
+  invalidation on volume movement, and terrain shadows. Cloud-aware rain,
+  gameplay weather queries, external authored noise assets, and particle
   infrastructure remain outstanding.
 
 ### Phase 6 - GPU Scale And Optional Tiers

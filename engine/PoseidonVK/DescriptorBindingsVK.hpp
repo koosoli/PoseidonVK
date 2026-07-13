@@ -21,7 +21,7 @@ inline constexpr uint32_t kFrameDescriptorSetBindingCount = 3;
 // and fragment stages today; lighting and fog are computed fragment-side while
 // camera/projection and world transforms are consumed vertex-side.
 inline constexpr VkShaderStageFlags kFrameConstantsStages =
-    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 inline constexpr VkShaderStageFlags kDrawConstantsStages =
     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 inline constexpr VkShaderStageFlags kShadowMapStages =

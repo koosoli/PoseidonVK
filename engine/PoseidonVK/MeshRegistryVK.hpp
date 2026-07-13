@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <array>
 #include <unordered_map>
 #include <vector>
 
@@ -27,6 +28,16 @@ struct MeshResourcesVK
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     std::uint32_t vertexCount = 0;
     std::uint32_t indexCount = 0;
+    // Conservative local-space sphere consumed by the GPU scene culler.  The
+    // default deliberately disables rejection for externally registered legacy
+    // meshes until their upload path supplies real bounds.
+    float localBoundsCenter[3] = {};
+    float localBoundsRadius = 1000000.0f;
+    // Optional mesh-wide LOD index ranges.  A zero count means "use the draw
+    // section range" so existing meshes keep exact legacy behaviour.
+    std::array<std::uint32_t, 4> lodFirstIndex = {};
+    std::array<std::uint32_t, 4> lodIndexCount = {};
+    std::array<float, 4> lodDistance = {}; // LOD0 is always selected at zero.
 
     bool IsValid() const noexcept { return vertexBuffer != VK_NULL_HANDLE && indexBuffer != VK_NULL_HANDLE; }
 };

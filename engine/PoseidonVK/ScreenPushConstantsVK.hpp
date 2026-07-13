@@ -22,6 +22,8 @@ struct alignas(16) ScreenPushConstantsVK
     float alphaRef = 0.0f;
     float fogColor[4] = {};
     std::uint32_t fogMode = 1;
+    // GLSL aligns the following vec3 to a 16-byte boundary after fogMode.
+    float _alignAfterFogMode[3] = {};
     float _pad[3] = {};
 };
 
@@ -44,8 +46,8 @@ inline ScreenPushConstantsVK BuildScreenPushConstants(int width, int height, std
 }
 
 static_assert(offsetof(ScreenPushConstantsVK, vpScale) == 0);
-static_assert(sizeof(ScreenPushConstantsVK) == 48);
-static_assert(kScreenPushConstantsSize == 48);
+static_assert(sizeof(ScreenPushConstantsVK) == 64);
+static_assert(kScreenPushConstantsSize == 64);
 static_assert(sizeof(ScreenPushConstantsVK) <= 128, "Screen push constants must stay under the 128 B minimum");
 
 } // namespace Poseidon::vk

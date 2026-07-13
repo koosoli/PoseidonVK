@@ -107,6 +107,30 @@ struct LocalLight
     LocalLightKind kind = LocalLightKind::Point;
 };
 
+// Simulation-owned weather and celestial data consumed by renderers. GPU
+// volume caches and temporal reconstruction remain backend implementation
+// details, but all backends observe the same atmosphere state.
+struct AtmosphereState
+{
+    float overcast = 0.0f;
+    float rainDensity = 0.0f;
+    float skyThrough = 1.0f;
+    float cloudDensity = 0.0f;
+    float cloudBrightness = 1.0f;
+    float cloudTime = 0.0f;
+    float cloudBase = 600.0f;
+    float cloudTop = 5000.0f;
+    float cloudExtent = 32768.0f;
+    std::uint32_t cloudSeed = 0x43574c44u;
+    float moonDirection[3] = {0.0f, -1.0f, 0.0f};
+    float moonUp[3] = {0.0f, 1.0f, 0.0f};
+    float moonPhase = 0.5f;
+    float starsVisibility = 0.0f;
+    float starsOrientation[3][3] = {{1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f},
+                                    {0.0f, 0.0f, 1.0f}};
+};
+
 // Projection and viewportScale live in different struct members at
 // different addresses — no byte-offset-table aliasing.  At Execute time
 // each is uploaded to its own UBO range or per-shader uniform, with
@@ -217,6 +241,7 @@ struct Frame
     float localLightScale = 1.0f;
     std::uint32_t localLightCount = 0;
     std::array<LocalLight, kMaxFrameLocalLights> localLights = {};
+    AtmosphereState atmosphere = {};
 
     // Per-frame GL error delta carried from SceneInputs.  Non-zero =
     // a new HIGH-severity GL error fired this frame.

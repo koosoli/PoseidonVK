@@ -68,6 +68,7 @@ struct SceneInputs
     float     fogStart          = 0.0f;
     float     fogEnd            = 1000.0f;
     std::uint32_t fogColorRGBA  = 0;
+    AtmosphereState atmosphere = {};
 
     // Visibility flags.
     SceneFlags flags = {};

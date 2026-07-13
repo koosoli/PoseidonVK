@@ -14,8 +14,8 @@ layout(set = 1, binding = 0, std140) uniform CloudConstants
     mat4 previousView; mat4 previousProjection; vec4 cameraPosition; vec4 previousCameraPosition;
     vec4 windOffset; vec4 previousWindOffset; vec4 volumeOrigin; vec4 renderSizeAndHistory;
 } cloud;
-layout(set = 1, binding = 3) uniform sampler2D cloudCurrent;
-layout(set = 1, binding = 4) uniform sampler2D cloudHistory;
+layout(set = 1, binding = 5) uniform sampler2D cloudCurrent;
+layout(set = 1, binding = 6) uniform sampler2D cloudHistory;
 layout(location = 0) in vec3 vWorldRay;
 layout(location = 1) in vec2 vNdc;
 layout(location = 2) in vec2 vUv;
@@ -23,13 +23,8 @@ layout(location = 0) out vec4 outColor;
 void main()
 {
     vec4 current = texture(cloudCurrent, vUv);
-    vec3 ray = normalize(vWorldRay);
-    float t = clamp((4000.0 - cloud.cameraPosition.y) / max(abs(ray.y), .08), 1200.0, 16000.0);
-    vec4 prevClip = cloud.previousProjection * cloud.previousView * vec4(cloud.cameraPosition.xyz + ray * t, 1.0);
-    vec2 prevUv = prevClip.xy / max(prevClip.w, .0001) * .5 + .5;
-    bool valid = cloud.renderSizeAndHistory.z > .5 && all(greaterThan(prevUv, vec2(.01))) && all(lessThan(prevUv, vec2(.99)));
-    vec4 history = valid ? texture(cloudHistory, prevUv) : current;
-    // Reject disocclusions while retaining enough history to hide the low-res march.
-    float agreement = 1.0 - clamp(abs(history.a - current.a) * 5.0, 0.0, 1.0);
-    outColor = mix(current, history, valid ? .72 * agreement : 0.0);
+    // The first port used an approximate reprojection distance and produced
+    // persistent sky ghosts. Keep the fixed-volume path stable until clouds
+    // carry the per-pixel march depth needed for exact history reprojection.
+    outColor = current;
 }

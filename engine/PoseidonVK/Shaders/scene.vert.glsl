@@ -1,4 +1,7 @@
 #version 450
+#ifdef POSEIDON_GPU_SCENE
+#extension GL_ARB_shader_draw_parameters : enable
+#endif
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -85,7 +88,13 @@ const uint kTexGenGrass  = 4u;
 void main()
 {
     bool hasDrawConstants = draw.useDrawConstants != 0u && drawConstants.draws.length() > 0u;
-    uint drawIndex = hasDrawConstants ? min(draw.drawIndex, drawConstants.draws.length() - 1u) : 0u;
+    // Indirect scene commands encode their DrawConstants index in
+    // firstInstance.  Direct/legacy draws retain the push-constant index.
+    uint selectedDrawIndex = draw.drawIndex;
+#ifdef POSEIDON_GPU_SCENE
+    selectedDrawIndex = gl_BaseInstanceARB != 0u ? gl_BaseInstanceARB : draw.drawIndex;
+#endif
+    uint drawIndex = hasDrawConstants ? min(selectedDrawIndex, drawConstants.draws.length() - 1u) : 0u;
     mat4 world = hasDrawConstants ? drawConstants.draws[drawIndex].world : draw.world;
     vec4 worldPos = world * vec4(inPosition, 1.0);
     vec3 worldNormal = normalize(mat3(world) * inNormal);

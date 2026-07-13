@@ -5,6 +5,9 @@
 #include <Poseidon/Graphics/Rendering/Primitives/Poly.hpp>
 #include <Poseidon/Foundation/Framework/Log.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace Poseidon
 {
 
@@ -103,6 +106,31 @@ bool VertexBufferVK::Init(EngineVK& engine, const Shape& src, VBType type)
     resources.indexBuffer = indexBuffer.buffer;
     resources.vertexCount = _vertexCount;
     resources.indexCount = _indexCount;
+    if (!cpuBuffers.vertices.empty())
+    {
+        float minimum[3] = {cpuBuffers.vertices[0].position[0], cpuBuffers.vertices[0].position[1],
+                            cpuBuffers.vertices[0].position[2]};
+        float maximum[3] = {minimum[0], minimum[1], minimum[2]};
+        for (const vk::MeshVertexVK& vertex : cpuBuffers.vertices)
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                minimum[axis] = std::min(minimum[axis], vertex.position[axis]);
+                maximum[axis] = std::max(maximum[axis], vertex.position[axis]);
+            }
+        }
+        for (int axis = 0; axis < 3; ++axis)
+            resources.localBoundsCenter[axis] = (minimum[axis] + maximum[axis]) * 0.5f;
+        float radiusSquared = 0.0f;
+        for (const vk::MeshVertexVK& vertex : cpuBuffers.vertices)
+        {
+            const float dx = vertex.position[0] - resources.localBoundsCenter[0];
+            const float dy = vertex.position[1] - resources.localBoundsCenter[1];
+            const float dz = vertex.position[2] - resources.localBoundsCenter[2];
+            radiusSquared = std::max(radiusSquared, dx * dx + dy * dy + dz * dz);
+        }
+        resources.localBoundsRadius = std::sqrt(radiusSquared);
+    }
 
     engine._meshRegistry.Register(_meshResourceId, resources);
 

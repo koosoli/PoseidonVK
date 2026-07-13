@@ -64,6 +64,24 @@ frame::Frame makeFrame()
     inputs.fogStart = 25.0f;
     inputs.fogEnd = 125.0f;
     inputs.fogColorRGBA = 0x336699ccu;
+    inputs.atmosphere.overcast = 0.25f;
+    inputs.atmosphere.rainDensity = 0.5f;
+    inputs.atmosphere.cloudDensity = 0.75f;
+    inputs.atmosphere.cloudBrightness = 0.8f;
+    inputs.atmosphere.cloudBase = 900.0f;
+    inputs.atmosphere.cloudTop = 1900.0f;
+    inputs.atmosphere.cloudExtent = 12000.0f;
+    inputs.atmosphere.moonDirection[0] = 0.2f;
+    inputs.atmosphere.moonDirection[1] = -0.8f;
+    inputs.atmosphere.moonDirection[2] = 0.4f;
+    inputs.atmosphere.moonUp[1] = 1.0f;
+    inputs.atmosphere.moonPhase = 0.5f;
+    inputs.atmosphere.starsOrientation[0][0] = 0.0f;
+    inputs.atmosphere.starsOrientation[0][1] = -1.0f;
+    inputs.atmosphere.starsOrientation[1][0] = 1.0f;
+    inputs.atmosphere.starsVisibility = 0.9f;
+    inputs.atmosphere.skyThrough = 0.7f;
+    inputs.atmosphere.cloudSeed = 42;
     return frame::BuildFrame(inputs);
 }
 
@@ -101,7 +119,13 @@ TEST_CASE("Vulkan frame constants match std140 descriptor layout", "[vulkan][fra
     STATIC_REQUIRE(offsetof(FrameConstantsVK, cloudOrigin) == 1216);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, wind) == 1232);
     STATIC_REQUIRE(offsetof(FrameConstantsVK, windOffset) == 1248);
-    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 1264);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, cloudWeather) == 1264);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, cloudGeometry) == 1280);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, moonDirection) == 1296);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, moonUpAndPhase) == 1312);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, starsOrientation) == 1328);
+    STATIC_REQUIRE(offsetof(FrameConstantsVK, skyVisibility) == 1376);
+    STATIC_REQUIRE(sizeof(FrameConstantsVK) == 1392);
 }
 
 TEST_CASE("Vulkan temporal cloud constants have a stable uniform layout", "[vulkan][clouds]")
@@ -180,6 +204,18 @@ TEST_CASE("Vulkan frame constants preserve frame camera matrices", "[vulkan][fra
     CHECK(constants.localLightPosition[1][0] == 4.0f);
     CHECK(constants.localLightPosition[1][3] == 75.0f);
     CHECK(constants.localLightDirection[1][3] == 1.0f);
+    CHECK(constants.cloudWeather[0] == 0.25f);
+    CHECK(constants.cloudWeather[2] == 0.75f);
+    CHECK(constants.cloudGeometry[0] == 900.0f);
+    CHECK(constants.cloudGeometry[2] == 12000.0f);
+    CHECK(constants.moonDirection[1] == -0.8f);
+    CHECK(constants.moonUpAndPhase[1] == 1.0f);
+    CHECK(constants.moonUpAndPhase[3] == 0.5f);
+    CHECK(constants.starsOrientation[0][1] == -1.0f);
+    CHECK(constants.starsOrientation[1][0] == 1.0f);
+    CHECK(constants.skyVisibility[0] == 0.9f);
+    CHECK(constants.skyVisibility[1] == 0.7f);
+    CHECK(constants.skyVisibility[2] == 42.0f);
 }
 
 TEST_CASE("Vulkan frame constants expose viewport and world rect", "[vulkan][frame-constants]")

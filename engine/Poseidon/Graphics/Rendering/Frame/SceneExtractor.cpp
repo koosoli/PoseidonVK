@@ -219,6 +219,12 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
         s.wind[0] = wind.X();
         s.wind[1] = wind.Y();
         s.wind[2] = wind.Z();
+        s.atmosphere.overcast = landscape->GetOvercast();
+        s.atmosphere.rainDensity = landscape->GetRainDensity();
+        s.atmosphere.skyThrough = landscape->SkyThrough();
+        s.atmosphere.cloudDensity = landscape->CloudsAlpha();
+        s.atmosphere.cloudBrightness = landscape->CloudsBrightness();
+        s.atmosphere.cloudTime = landscape->CloudsPosition();
     }
 
     // Fog
@@ -246,6 +252,20 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
         s.sunDirection[1] = dir.Y();
         s.sunDirection[2] = dir.Z();
         s.localLightScale = sun->NightEffect();
+        const Vector3 moonDirection = sun->MoonDirection();
+        const Vector3 moonUp = sun->MoonDirectionUp();
+        s.atmosphere.moonDirection[0] = moonDirection.X();
+        s.atmosphere.moonDirection[1] = moonDirection.Y();
+        s.atmosphere.moonDirection[2] = moonDirection.Z();
+        s.atmosphere.moonUp[0] = moonUp.X();
+        s.atmosphere.moonUp[1] = moonUp.Y();
+        s.atmosphere.moonUp[2] = moonUp.Z();
+        s.atmosphere.moonPhase = sun->MoonPhase();
+        s.atmosphere.starsVisibility = sun->StarsVisibility();
+        const Matrix3& starsOrientation = sun->StarsOrientation();
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                s.atmosphere.starsOrientation[row][column] = starsOrientation(row, column);
     }
     else
     {

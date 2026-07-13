@@ -29,7 +29,8 @@ TEST_CASE("Vulkan frame descriptor layout bindings match the contract", "[vulkan
     CHECK(frameBinding.binding == Poseidon::vk::kFrameConstantsBinding);
     CHECK(frameBinding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     CHECK(frameBinding.descriptorCount == 1);
-    CHECK(frameBinding.stageFlags == (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT));
+    CHECK(frameBinding.stageFlags ==
+          (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT));
 
     const VkDescriptorSetLayoutBinding drawBinding = Poseidon::vk::MakeDrawConstantsLayoutBinding();
     CHECK(drawBinding.binding == Poseidon::vk::kDrawConstantsBinding);

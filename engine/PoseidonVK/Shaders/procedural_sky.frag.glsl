@@ -14,6 +14,10 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 sunDirection;
 } frame;
 
+// The image is a persistent HDR equirectangular sky map.  It is regenerated
+// only when the celestial/weather cache key changes, never for camera motion.
+layout(set = 1, binding = 0) uniform sampler2D skyMap;
+
 layout(location = 0) in vec3 vWorldRay;
 layout(location = 0) out vec4 outColor;
 
@@ -25,31 +29,15 @@ layout(push_constant) uniform ProceduralSkyParams
 void main()
 {
     vec3 ray = normalize(vWorldRay);
-    vec3 sun = normalize(-frame.sunDirection.xyz);
-    float elevation = clamp(ray.y * 0.5 + 0.5, 0.0, 1.0);
-    float day = smoothstep(-0.12, 0.04, sun.y);
-
-    vec3 fog = frame.fogColor.rgb;
-    vec3 horizon = mix(vec3(0.025, 0.045, 0.11), mix(fog, vec3(0.62, 0.72, 0.88), 0.35), day);
-    vec3 zenith = mix(vec3(0.008, 0.015, 0.055), vec3(0.08, 0.28, 0.65), day);
-    vec3 color = mix(horizon, zenith, pow(elevation, 0.55));
-
-    float horizonHaze = exp(-abs(ray.y) * 16.0);
-    color = mix(color, fog, horizonHaze * 0.32 * day);
-
-    float sunDot = max(dot(ray, sun), 0.0);
-    // This is atmospheric forward scattering, not post-process bloom: it is
-    // visible only in the sky and remains correctly occluded by world geometry.
-    color += vec3(1.0, 0.48, 0.14) * pow(sunDot, 10.0) * 0.28;
-    color += vec3(1.0, 0.72, 0.38) * pow(sunDot, 48.0) * 0.45;
-    color += vec3(1.0, 0.88, 0.62) * smoothstep(0.99993, 0.99998, sunDot) * 2.0;
+    const float invTwoPi = 0.15915494309189535;
+    vec2 uv = vec2(atan(ray.z, ray.x) * invTwoPi + 0.5,
+                   acos(clamp(ray.y, -1.0, 1.0)) * (1.0 / 3.141592653589793));
+    vec3 color = texture(skyMap, uv).rgb;
 
     if (skyParams.hdrEnabled > 0.5)
     {
         // Preserve radiance above one for the FP16 scene target. The compositor
         // reverses this 1/1.5 source transfer before ACES and bloom.
-        color += vec3(1.0, 0.62, 0.22) * pow(sunDot, 12.0) * 5.0;
-        color += vec3(1.0, 0.88, 0.62) * smoothstep(0.99993, 0.99998, sunDot) * 28.0;
         outColor = vec4(pow(max(color, vec3(0.0)), vec3(1.0 / 1.5)), 1.0);
     }
     else

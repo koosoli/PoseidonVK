@@ -4,6 +4,7 @@
 #include <PoseidonVK/CloudConstantsVK.hpp>
 #include <PoseidonVK/DrawConstantsVK.hpp>
 #include <PoseidonVK/FrameConstantsVK.hpp>
+#include <PoseidonVK/GpuSceneVK.hpp>
 #include <PoseidonVK/MeshRegistryVK.hpp>
 #include <PoseidonVK/PipelineCacheVK.hpp>
 #include <PoseidonVK/SceneDrawCommandsVK.hpp>
@@ -125,6 +126,11 @@ class EngineVK : public EngineDummy
     bool CreateSceneVertexBuffer();
     bool CreateSceneIndexBuffer();
     bool EnsureDrawConstantsBufferCapacity(std::size_t drawCount);
+    bool CreateGpuSceneResources();
+    bool EnsureGpuSceneCapacity(std::size_t instanceCount, std::size_t batchCount);
+    void DestroyGpuSceneResources();
+    void BuildGpuSceneInputs();
+    void RecordGpuSceneCull(VkCommandBuffer commandBuffer);
     bool CreateFrameDescriptorLayout();
     bool CreateFrameDescriptorSet();
     void UpdateFrameDescriptorSet();
@@ -154,14 +160,30 @@ class EngineVK : public EngineDummy
     bool CreateBootstrapPipeline();
     bool CreateScenePipeline();
     bool CreateProceduralSkyPipeline();
+    bool CreateSkyMapDescriptorLayout();
+    bool CreateSkyMapDescriptorSet();
+    bool CreateSkyMapPipelineLayout();
+    bool CreateSkyMapResources();
+    void DestroySkyMapResources();
+    void DestroySkyMapDescriptorResources();
+    void DestroySkyMapPipelineLayout();
+    void UpdateSkyMapInvalidation();
+    bool RecordSkyMapBake(VkCommandBuffer commandBuffer);
     bool CreateVolumetricCloudDescriptorLayout();
     bool CreateVolumetricCloudDescriptorSet();
     bool CreateVolumetricCloudPipelineLayout();
     bool CreateVolumetricCloudPipeline();
+    bool CreateCloudComputeDescriptorLayouts();
+    bool CreateCloudComputeDescriptorSets();
+    bool CreateCloudComputePipelineLayouts();
+    bool CreateCloudComputePipelines();
     bool CreateCloudResources();
     void DestroyCloudResources();
     void UpdateCloudDescriptorSets(std::uint32_t historyReadIndex);
     void UpdateCloudConstants();
+    void RecordCloudVolumeCompute(VkCommandBuffer commandBuffer);
+    void DestroyCloudComputeDescriptorResources();
+    void DestroyCloudComputePipelineResources();
     void DestroyVolumetricCloudDescriptorResources();
     void DestroyVolumetricCloudPipelineLayout();
     bool CreateScreenPipeline();
@@ -226,6 +248,9 @@ class EngineVK : public EngineDummy
     vk::BufferVK _frameConstantsBuffer;
     vk::BufferVK _cloudConstantsBuffer;
     vk::BufferVK _drawConstantsBuffer;
+    vk::BufferVK _gpuSceneInstancesBuffer;
+    vk::BufferVK _gpuSceneIndirectBuffer;
+    vk::BufferVK _gpuSceneCountBuffer;
     vk::BufferVK _bootstrapVertexBuffer;
     vk::BufferVK _bootstrapIndexBuffer;
     vk::BufferVK _sceneVertexBuffer;
@@ -233,6 +258,11 @@ class EngineVK : public EngineDummy
     VkDescriptorSetLayout _frameDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _frameDescriptorSet = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _gpuSceneDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _gpuSceneDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet _gpuSceneDescriptorSet = VK_NULL_HANDLE;
+    VkPipelineLayout _gpuScenePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline _gpuSceneCullPipeline = VK_NULL_HANDLE;
     VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout _scenePipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout _textureDescriptorSetLayout = VK_NULL_HANDLE;
@@ -240,10 +270,13 @@ class EngineVK : public EngineDummy
     VkPipeline _bootstrapPipeline = VK_NULL_HANDLE;
     VkPipeline _scenePipeline = VK_NULL_HANDLE;
     VkPipeline _proceduralSkyPipeline = VK_NULL_HANDLE;
+    VkPipeline _skyMapBakePipeline = VK_NULL_HANDLE;
     VkPipeline _volumetricCloudPipeline = VK_NULL_HANDLE;
-    VkPipeline _cloudLightingPipeline = VK_NULL_HANDLE;
     VkPipeline _cloudTemporalPipeline = VK_NULL_HANDLE;
     VkPipeline _cloudCompositePipeline = VK_NULL_HANDLE;
+    VkPipeline _cloudDensityErosionPipeline = VK_NULL_HANDLE;
+    VkPipeline _cloudDistanceFieldPipeline = VK_NULL_HANDLE;
+    VkPipeline _cloudLightMapPipeline = VK_NULL_HANDLE;
     VkPipeline _worldCompositePipeline = VK_NULL_HANDLE;
     VkPipeline _eyeAdaptationPipeline = VK_NULL_HANDLE;
     // Scene shader modules kept alive for pipeline cache variant creation.
@@ -261,11 +294,23 @@ class EngineVK : public EngineDummy
     vk::PipelineCacheVK _screenOverlayPipelineCache;
     VkPipelineLayout _screenPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout _screenDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _skyMapDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _skyMapDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet _skyMapDescriptorSet = VK_NULL_HANDLE;
+    VkPipelineLayout _skyMapPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout _skyMapBakePipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout _volumetricCloudDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool _volumetricCloudDescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _volumetricCloudDescriptorSet = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, 2> _volumetricCloudDescriptorSets = {};
     VkPipelineLayout _volumetricCloudPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _cloudGenerationDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _cloudLightingDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _cloudComputeDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet _cloudGenerationDescriptorSet = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, 2> _cloudLightingDescriptorSets = {};
+    VkPipelineLayout _cloudGenerationPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout _cloudLightingPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout _worldCompositeDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool _worldCompositeDescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _worldCompositeDescriptorSet = VK_NULL_HANDLE;
@@ -291,11 +336,11 @@ class EngineVK : public EngineDummy
     VkImageView _depthImageView = VK_NULL_HANDLE;
     VkRenderPass _renderPass = VK_NULL_HANDLE;
     VkRenderPass _worldLateRenderPass = VK_NULL_HANDLE;
-    VkRenderPass _cloudLightingRenderPass = VK_NULL_HANDLE;
     VkRenderPass _cloudRaymarchRenderPass = VK_NULL_HANDLE;
     VkRenderPass _cloudTemporalRenderPass = VK_NULL_HANDLE;
     VkRenderPass _cloudCompositeRenderPass = VK_NULL_HANDLE;
     VkRenderPass _presentRenderPass = VK_NULL_HANDLE;
+    VkRenderPass _skyMapRenderPass = VK_NULL_HANDLE;
     VkImage _worldColorImage = VK_NULL_HANDLE;
     VkDeviceMemory _worldColorImageMemory = VK_NULL_HANDLE;
     VkImageView _worldColorImageView = VK_NULL_HANDLE;
@@ -304,13 +349,21 @@ class EngineVK : public EngineDummy
     VkImageView _worldDepthImageView = VK_NULL_HANDLE;
     VkFramebuffer _worldFramebuffer = VK_NULL_HANDLE;
     VkFramebuffer _worldLateFramebuffer = VK_NULL_HANDLE;
-    VkFramebuffer _cloudLightingFramebuffer = VK_NULL_HANDLE;
     VkFramebuffer _cloudRaymarchFramebuffer = VK_NULL_HANDLE;
     std::array<VkFramebuffer, 2> _cloudTemporalFramebuffers = {};
     VkFramebuffer _cloudCompositeFramebuffer = VK_NULL_HANDLE;
-    vk::ImageVK _cloudLighting;
+    VkFramebuffer _skyMapFramebuffer = VK_NULL_HANDLE;
+    vk::ImageVK _skyMap;
+    VkSampler _skyMapSampler = VK_NULL_HANDLE;
+    VkImageLayout _skyMapLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     vk::ImageVK _cloudCurrent;
     std::array<vk::ImageVK, 2> _cloudHistory = {};
+    // Persistent, absolute-world cloud fields.  Density and distance are
+    // rebuilt when the simulation moves their clipped volume; illumination is
+    // ping-ponged each submitted simulation frame.
+    vk::ImageVK _cloudDensityVolume;
+    vk::ImageVK _cloudDistanceVolume;
+    std::array<vk::ImageVK, 2> _cloudLightVolumes = {};
     VkSampler _cloudSampler = VK_NULL_HANDLE;
     VkRenderPass _eyeAdaptationRenderPass = VK_NULL_HANDLE;
     std::array<vk::ImageVK, 2> _eyeAdaptationHistory = {};
@@ -334,8 +387,12 @@ class EngineVK : public EngineDummy
     bool _loggedFirstPresent = false;
     bool _hasFrameConstants = false;
     bool _validationEnabled = false;
+    vk::GpuSceneCapabilitiesVK _gpuSceneCapabilities;
+    bool _gpuSceneEnabled = false;
     bool _debugUtilsEnabled = false;
     bool _proceduralSkyEnabled = false;
+    bool _skyMapDirty = true;
+    bool _skyMapValid = false;
     bool _volumetricCloudsEnabled = false;
     bool _cloudHistoryValid = false;
     bool _hdrEnabled = false;
@@ -346,7 +403,11 @@ class EngineVK : public EngineDummy
     std::uint32_t _eyeAdaptationCurrentIndex = 0;
     std::uint32_t _cloudHistoryCurrentIndex = 0;
     std::uint32_t _cloudFrameIndex = 0;
+    std::uint32_t _cloudLightVolumeReadIndex = 0;
     float _cloudLastUpdateSeconds = -1.0f;
+    bool _cloudVolumeBuilt = false;
+    bool _cloudVolumeRebuildPending = true;
+    std::array<float, 11> _cloudVolumeBuildParameters = {};
     vk::CloudConstantsVK _cloudConstants = {};
     vk::FrameConstantsVK _previousCloudFrameConstants = {};
     std::uint32_t _eyeAdaptationPendingIndex = 0;
@@ -354,12 +415,18 @@ class EngineVK : public EngineDummy
     bool _gpuTimingPending = false;
     std::uint32_t _gpuTimingFrameCount = 0;
     vk::FrameConstantsVK _lastFrameConstants = {};
+    std::array<float, 40> _skyMapCachedInputs = {};
+    std::array<float, 40> _skyMapRequestedInputs = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
     std::vector<vk::SceneDrawCommandVK> _lastSceneDrawCommands;
     std::array<std::vector<std::uint32_t>, 6> _sceneCommandGroups;
+    std::vector<vk::GpuSceneInstanceVK> _gpuSceneInstances;
+    std::vector<vk::GpuSceneBatchVK> _gpuSceneBatches;
     vk::MeshRegistryVK _meshRegistry;
     std::uint32_t _bootstrapMeshId = 0;
     std::size_t _drawConstantsCapacity = 0;
+    std::size_t _gpuSceneInstanceCapacity = 0;
+    std::size_t _gpuSceneBatchCapacity = 0;
     VkClearColorValue _clearColor{{0.0f, 0.0f, 0.0f, 1.0f}};
     int _width = 1;
     int _height = 1;

@@ -13,6 +13,7 @@ set(POSEIDON_VK_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsBackendVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MeshBuilderVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MeshRegistryVK.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/GpuSceneVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RenderStateVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SceneDrawCommandsVK.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ScenePushConstantsVK.hpp
@@ -27,11 +28,16 @@ set(POSEIDON_VK_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/bootstrap_triangle.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scene.vert.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scene.frag.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scene_cull.comp.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/procedural_sky.vert.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/procedural_sky.frag.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/sky_map_bake.vert.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/sky_map_bake.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/volumetric_clouds.vert.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/volumetric_clouds.frag.glsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_lighting.frag.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_density_erosion.comp.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_distance_field.comp.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_light_map.comp.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_temporal.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/cloud_composite.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/world_composite.vert.glsl
