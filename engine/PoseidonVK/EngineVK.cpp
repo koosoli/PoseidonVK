@@ -3112,8 +3112,8 @@ void EngineVK::LogGpuTimings()
     {
         return static_cast<double>(timestamps[end] - timestamps[begin]) * _timestampPeriodNs * 1e-6;
     };
-    LOG_INFO(Graphics, "Vulkan GPU ms: world={:.2f} clouds={:.2f} compositor={:.2f} present={:.2f}",
-             elapsedMs(0, 3), elapsedMs(1, 2), elapsedMs(4, 5), elapsedMs(4, 6));
+    LOG_INFO(Graphics, "Vulkan GPU ms: world={:.2f} base={:.2f} clouds={:.2f} late={:.2f} compositor={:.2f} present={:.2f}",
+             elapsedMs(0, 3), elapsedMs(0, 1), elapsedMs(1, 2), elapsedMs(2, 3), elapsedMs(4, 5), elapsedMs(4, 6));
 }
 
 bool EngineVK::UploadDrawConstants()
