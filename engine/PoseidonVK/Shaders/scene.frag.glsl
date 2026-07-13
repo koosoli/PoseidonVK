@@ -98,6 +98,13 @@ void main()
     uint pass      = hasDraw ? drawConstants.draws[drawIdx].pass     : 0u;
     vec4 tint      = hasDraw ? drawConstants.draws[drawIdx].tint     : vec4(1.0);
 
+    // Ordinary cutout materials derive alpha from tex0. Reject invisible
+    // fragments before lighting and shadow work; Grass is excluded because its
+    // alpha also depends on tex1 and the grass coefficient.
+    vec4 c0 = texture(tex0, vTexcoord0);
+    if (alphaMode == 1u && family != kFamilyGrass && c0.a * tint.a < float(alphaRef) / 255.0)
+        discard;
+
     // -----------------------------------------------------------------------
     // Directional (sun) + local lighting
     // Lit and sun-disabled draws receive positioned lights. Only fully lit
@@ -172,7 +179,6 @@ void main()
     // -----------------------------------------------------------------------
     // Texture samples
     // -----------------------------------------------------------------------
-    vec4 c0 = texture(tex0, vTexcoord0);
     // Most terrain/model/cutout materials use only tex0. Sampling tex1 only
     // for the three shader families that consume it avoids a full-screen
     // second texture read for the common path.
