@@ -303,11 +303,16 @@ void main()
                 if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0 && sc.z > 0.0 && sc.z < 1.0)
                 {
                     float bias = frame.cascadeCtl.z * float(c + 1) * float(c + 1);
+                    // Four taps retain a symmetric PCF footprint while halving
+                    // the shadow-map reads on terrain and opaque world pixels.
                     float lit = 0.0;
-                    for (int dy = -1; dy <= 1; ++dy)
-                        for (int dx = -1; dx <= 1; ++dx)
-                            lit += (sc.z - bias > texture(shadowMap, vec3(suv + vec2(float(dx), float(dy)) * ts, float(c))).r) ? 0.0 : 1.0;
-                    litSum += w * (lit / 9.0);
+                    for (int dy = 0; dy < 2; ++dy)
+                        for (int dx = 0; dx < 2; ++dx)
+                        {
+                            vec2 offset = vec2(float(dx) - 0.5, float(dy) - 0.5) * ts;
+                            lit += (sc.z - bias > texture(shadowMap, vec3(suv + offset, float(c))).r) ? 0.0 : 1.0;
+                        }
+                    litSum += w * (lit * 0.25);
                     wSum += w;
                 }
             }
