@@ -26,6 +26,8 @@ set(POSEIDON_VK_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/bootstrap_triangle.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scene.vert.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scene.frag.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/procedural_sky.vert.glsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/procedural_sky.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/screen.vert.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/screen.frag.glsl
     ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shadowDepth.vert.glsl

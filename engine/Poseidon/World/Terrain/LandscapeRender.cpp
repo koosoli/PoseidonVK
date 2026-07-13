@@ -1371,6 +1371,9 @@ void Landscape::DrawGround(const LandBegEnd& bigRect, Scene& scene, const Ground
 
 void Landscape::DrawHorizont(Scene& scene)
 {
+    if (GEngine->ProceduralSkyActive())
+        return;
+
     GEngine->EnableReorderQueues(false);
     GEngine->FlushQueues();
 
@@ -1637,6 +1640,8 @@ void Landscape::CalculBoundingRect(LandBegEnd& res, const Camera& camera, float 
 void Landscape::DrawSky(Scene& scene)
 {
     // if( !ENGINE_CONFIG.background ) return;
+    if (GEngine->ProceduralSkyActive())
+        return;
 
     Camera& camera = *scene.GetCamera();
 
@@ -1708,6 +1713,9 @@ struct CloudInfo
 
 void Landscape::DrawClouds(Scene& scene)
 {
+    if (GEngine->ProceduralSkyActive())
+        return;
+
     const Camera& camera = *scene.GetCamera();
 
     // Matrix4Val invView=camera.Transform();

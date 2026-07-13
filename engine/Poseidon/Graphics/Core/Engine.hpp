@@ -873,6 +873,10 @@ class Engine : public IGraphicsEngine
     /// SwitchWindowed (the request is async, confirmation comes via events).
     virtual void OnFullscreenChanged(bool /*windowed*/) {}
 
+    /// True only while a backend owns the entire sky background. The landscape
+    /// then skips its legacy sky dome, horizon polygon, and cloud layers.
+    virtual bool ProceduralSkyActive() const { return false; }
+
   protected:
     // Post-hook fires from OnWindowResized so apps can re-run the aspect policy
     // when the viewport changes.

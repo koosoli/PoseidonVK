@@ -33,6 +33,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <set>
@@ -99,6 +100,12 @@ constexpr const char kSceneVertexShader[] =
     ;
 constexpr const char kSceneFragmentShader[] =
 #include <PoseidonVK/Shaders/scene.frag.glsl.hpp>
+    ;
+constexpr const char kProceduralSkyVertexShader[] =
+#include <PoseidonVK/Shaders/procedural_sky.vert.glsl.hpp>
+    ;
+constexpr const char kProceduralSkyFragmentShader[] =
+#include <PoseidonVK/Shaders/procedural_sky.frag.glsl.hpp>
     ;
 constexpr const char kScreenVertexShader[] =
 #include <PoseidonVK/Shaders/screen.vert.glsl.hpp>
@@ -380,9 +387,16 @@ RString EngineVK::GetRendererName() const
     return "Vulkan Bootstrap";
 }
 
+bool EngineVK::ProceduralSkyActive() const
+{
+    return _proceduralSkyEnabled && _proceduralSkyPipeline != VK_NULL_HANDLE && _hasFrameConstants;
+}
+
 bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel, const std::string& displayMode)
 {
     _bitsPerPixel = bitsPerPixel > 0 ? bitsPerPixel : 32;
+    if (const char* value = std::getenv("POSEIDON_VK_PROCEDURAL_SKY"))
+        _proceduralSkyEnabled = std::strcmp(value, "0") != 0;
 
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
@@ -453,6 +467,7 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
         !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() || !CreatePipelineLayout() ||
         !CreateTextureDescriptorPool() || !CreateScenePipelineLayout() || !CreateFrameDescriptorSet() ||
         !CreateCommandPool() || !CreateSwapchain() || !CreateBootstrapPipeline() || !CreateScenePipeline() ||
+        !CreateProceduralSkyPipeline() ||
         !CreateScreenDescriptorLayout() || !CreateScreenPipelineLayout() || !CreateScreenPipeline() ||
         !CreateSyncObjects())
     {
@@ -484,6 +499,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
              _height, static_cast<int>(_windowMode), _graphicsQueueFamily, _presentQueueFamily);
     LOG_WARN(Graphics, "Vulkan: scene raster parity is in progress; water and some legacy clipped geometry may differ "
                        "from the GL33 renderer.");
+    if (_proceduralSkyEnabled)
+        LOG_INFO(Graphics, "Vulkan: experimental procedural sky is enabled");
 
     _textBank = new TextBankVK(*this);
 
@@ -1877,6 +1894,120 @@ bool EngineVK::CreateScenePipeline()
     return true;
 }
 
+bool EngineVK::CreateProceduralSkyPipeline()
+{
+    if (_proceduralSkyPipeline)
+    {
+        vkDestroyPipeline(_device, _proceduralSkyPipeline, nullptr);
+        _proceduralSkyPipeline = VK_NULL_HANDLE;
+    }
+
+    std::vector<uint32_t> vertexSpirv;
+    std::vector<uint32_t> fragmentSpirv;
+    std::string error;
+    if (!CompileBootstrapShader(kProceduralSkyVertexShader, EShLangVertex, vertexSpirv, error) ||
+        !CompileBootstrapShader(kProceduralSkyFragmentShader, EShLangFragment, fragmentSpirv, error))
+    {
+        LOG_ERROR(Graphics, "Vulkan: procedural sky shader compile failed: {}", error);
+        return false;
+    }
+
+    auto createShaderModule = [&](const std::vector<uint32_t>& spirv, VkShaderModule& module)
+    {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = spirv.size() * sizeof(uint32_t);
+        createInfo.pCode = spirv.data();
+        return vkCreateShaderModule(_device, &createInfo, nullptr, &module) == VK_SUCCESS;
+    };
+
+    VkShaderModule vertexModule = VK_NULL_HANDLE;
+    VkShaderModule fragmentModule = VK_NULL_HANDLE;
+    if (!createShaderModule(vertexSpirv, vertexModule) || !createShaderModule(fragmentSpirv, fragmentModule))
+    {
+        if (vertexModule)
+            vkDestroyShaderModule(_device, vertexModule, nullptr);
+        if (fragmentModule)
+            vkDestroyShaderModule(_device, fragmentModule, nullptr);
+        LOG_ERROR(Graphics, "Vulkan: procedural sky shader module creation failed");
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertexModule;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragmentModule;
+    shaderStages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{};
+    viewport.y = static_cast<float>(_swapchainExtent.height);
+    viewport.width = static_cast<float>(_swapchainExtent.width);
+    viewport.height = -static_cast<float>(_swapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor{};
+    scissor.extent = _swapchainExtent;
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer =
+        vk::BuildRasterizationState(render::CullMode::None, render::FrontFaceMode::CW);
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depthStencil = vk::BuildDepthStencilState(render::DepthMode::Disabled);
+    VkPipelineColorBlendAttachmentState colorBlendAttachment =
+        vk::BuildColorBlendAttachmentState(render::BlendMode::Opaque);
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.layout = _pipelineLayout;
+    pipelineInfo.renderPass = _renderPass;
+
+    const VkResult result =
+        vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &_proceduralSkyPipeline);
+    vkDestroyShaderModule(_device, fragmentModule, nullptr);
+    vkDestroyShaderModule(_device, vertexModule, nullptr);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR(Graphics, "Vulkan: procedural sky pipeline creation failed: {}", VkResultName(result));
+        return false;
+    }
+
+    SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_proceduralSkyPipeline),
+                  "PoseidonVK Procedural Sky Pipeline");
+    LOG_INFO(Graphics, "Vulkan: procedural sky pipeline created");
+    return true;
+}
+
 bool EngineVK::CreateScreenDescriptorLayout()
 {
     VkDescriptorSetLayoutBinding binding{};
@@ -2298,6 +2429,13 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         // batches before the world so foreground geometry can overwrite them.
         RecordScreenDraws(commandBuffer, vk::ScreenDrawPhaseVK::Background);
     }
+    if (ProceduralSkyActive())
+    {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _proceduralSkyPipeline);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipelineLayout, 0, 1,
+                                &_frameDescriptorSet, 0, nullptr);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    }
     if (_scenePipeline)
     {
         VkPipeline lastBoundPipeline = _scenePipeline;
@@ -2353,7 +2491,6 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 VkDescriptorSet texDescriptorSet = VK_NULL_HANDLE;
                 std::uint32_t texId = draw.textureIds[0];
                 bool texFound = false;
-                const bool isSkyDraw = draw.pass == static_cast<std::uint32_t>(render::PassKind::Sky);
                 if (texId != 0)
                 {
                     TextureVK* tex = ResolveTexture(texId);
@@ -2361,21 +2498,6 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                     {
                         texDescriptorSet = tex->GetDescriptorSet(draw.samplerFilter, draw.samplerClamp);
                         texFound = true;
-                    }
-                }
-
-                // A missing sky texture produces a conspicuous black/grey region. Log it
-                // once per resource ID so configuration changes can be distinguished from
-                // an asset-residency failure without flooding the game log every frame.
-                if (isSkyDraw && (texId == TextureVK::kFallbackResourceId || !texFound ||
-                                  texDescriptorSet == VK_NULL_HANDLE))
-                {
-                    static std::set<std::uint32_t> loggedSkyTextureIds;
-                    if (loggedSkyTextureIds.insert(texId).second)
-                    {
-                        LOG_WARN(Graphics,
-                                 "Vulkan: sky draw is using an unavailable texture (id={}, registered={}, descriptor={})",
-                                 texId, texFound, texDescriptorSet != VK_NULL_HANDLE);
                     }
                 }
 
@@ -2533,6 +2655,12 @@ void EngineVK::DestroySwapchain()
     // Cached pipelines reference the render pass destroyed below. They must be
     // recreated for the new swapchain's render pass and viewport dimensions.
     _scenePipelineCache.Destroy(_device);
+
+    if (_proceduralSkyPipeline)
+    {
+        vkDestroyPipeline(_device, _proceduralSkyPipeline, nullptr);
+        _proceduralSkyPipeline = VK_NULL_HANDLE;
+    }
 
     if (_scenePipeline)
     {
@@ -2712,6 +2840,7 @@ bool EngineVK::RecreateSwapchain()
     vkDeviceWaitIdle(_device);
     DestroySwapchain();
     const bool recreated = CreateSwapchain() && CreateBootstrapPipeline() && CreateScenePipeline() &&
+                           CreateProceduralSkyPipeline() &&
                            CreateScreenPipeline() && CreateSyncObjects();
     _swapchainDirty = !recreated;
     return recreated;

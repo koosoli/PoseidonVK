@@ -107,6 +107,7 @@ class EngineVK : public EngineDummy
                                 int numCascades, int omniCount, int res, const ShadowCasterSet& casters) override;
     bool DumpShadowMap(const char* path) override;
     bool ShadowMapCacheSelfTest() override;
+    bool ProceduralSkyActive() const override;
 
   private:
     bool Initialize(int width, int height, bool windowed, int bitsPerPixel, const std::string& displayMode);
@@ -131,6 +132,7 @@ class EngineVK : public EngineDummy
     VkFormat FindDepthFormat() const;
     bool CreateBootstrapPipeline();
     bool CreateScenePipeline();
+    bool CreateProceduralSkyPipeline();
     bool CreateScreenPipeline();
     bool CreateScreenPipelineLayout();
     bool CreateScreenDescriptorLayout();
@@ -201,6 +203,7 @@ class EngineVK : public EngineDummy
     VkDescriptorPool _textureDescriptorPool = VK_NULL_HANDLE;
     VkPipeline _bootstrapPipeline = VK_NULL_HANDLE;
     VkPipeline _scenePipeline = VK_NULL_HANDLE;
+    VkPipeline _proceduralSkyPipeline = VK_NULL_HANDLE;
     // Scene shader modules kept alive for pipeline cache variant creation.
     VkShaderModule _sceneVertexModule = VK_NULL_HANDLE;
     VkShaderModule _sceneFragmentModule = VK_NULL_HANDLE;
@@ -243,6 +246,7 @@ class EngineVK : public EngineDummy
     bool _hasFrameConstants = false;
     bool _validationEnabled = false;
     bool _debugUtilsEnabled = false;
+    bool _proceduralSkyEnabled = false;
     vk::FrameConstantsVK _lastFrameConstants = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
     std::vector<vk::SceneDrawCommandVK> _lastSceneDrawCommands;
