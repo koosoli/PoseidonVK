@@ -2353,6 +2353,7 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 VkDescriptorSet texDescriptorSet = VK_NULL_HANDLE;
                 std::uint32_t texId = draw.textureIds[0];
                 bool texFound = false;
+                const bool isSkyDraw = draw.pass == static_cast<std::uint32_t>(render::PassKind::Sky);
                 if (texId != 0)
                 {
                     TextureVK* tex = ResolveTexture(texId);
@@ -2360,6 +2361,21 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                     {
                         texDescriptorSet = tex->GetDescriptorSet(draw.samplerFilter, draw.samplerClamp);
                         texFound = true;
+                    }
+                }
+
+                // A missing sky texture produces a conspicuous black/grey region. Log it
+                // once per resource ID so configuration changes can be distinguished from
+                // an asset-residency failure without flooding the game log every frame.
+                if (isSkyDraw && (texId == TextureVK::kFallbackResourceId || !texFound ||
+                                  texDescriptorSet == VK_NULL_HANDLE))
+                {
+                    static std::set<std::uint32_t> loggedSkyTextureIds;
+                    if (loggedSkyTextureIds.insert(texId).second)
+                    {
+                        LOG_WARN(Graphics,
+                                 "Vulkan: sky draw is using an unavailable texture (id={}, registered={}, descriptor={})",
+                                 texId, texFound, texDescriptorSet != VK_NULL_HANDLE);
                     }
                 }
 
