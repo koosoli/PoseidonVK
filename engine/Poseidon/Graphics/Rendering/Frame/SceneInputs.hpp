@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <optional>
 #include <Poseidon/World/Scene/Camera/Camera.hpp>
 
 // SceneInputs — the *value-typed* view of everything BuildFrame needs
@@ -96,6 +97,7 @@ struct SceneInputs
     std::vector<SceneDraw> shadowDraws;
     std::vector<SceneDraw> skyDraws;
     std::vector<SceneDraw> terrainOpaqueDraws;
+    std::optional<TerrainOpaque> dedicatedTerrainOpaque;
     std::vector<SceneDraw> worldOpaqueDraws;
     std::vector<SceneDraw> worldCutoutDraws;
     std::vector<SceneDraw> surfaceOverlayDraws;

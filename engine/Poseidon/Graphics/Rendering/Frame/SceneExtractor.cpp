@@ -311,6 +311,9 @@ SceneInputs ExtractSceneInputs(const Engine& engine, const ::Scene& scene)
     // capture, so they are valid Frame resources rather than synthetic tokens.
     if (engine.ConsumesRenderFramePlan())
     {
+        TerrainOpaque terrain;
+        if (engine.GetDedicatedTerrainOpaque(terrain))
+            s.dedicatedTerrainOpaque = std::move(terrain);
         for (const auto& source : scene.ShadowCasterCaptures())
         {
             if (source.meshResourceId == 0 || source.indexCount <= 0)

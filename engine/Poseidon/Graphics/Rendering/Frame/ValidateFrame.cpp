@@ -59,6 +59,17 @@ void check_I08_pass_kind_descriptor_alignment(const Frame& f, ValidationResult& 
     }
 }
 
+void check_I35_dedicated_terrain_exclusivity(const Frame& f, ValidationResult& r)
+{
+    if (!f.terrainOpaque)
+        return;
+    if (!f.terrainOpaque->Valid())
+        r.violations.push_back({"I-35", "dedicated terrain payload is structurally invalid"});
+    for (const Pass& pass : f.passes)
+        if (pass.kind == FramePassKind::TerrainOpaque && !pass.draws.empty())
+            r.violations.push_back({"I-35", "dedicated terrain payload and legacy terrain draws coexist"});
+}
+
 void check_I09_onsurface_disambiguation(const Frame& f, ValidationResult& r)
 {
     // Coplanar disambiguation: an OnSurface draw must have either
@@ -198,6 +209,7 @@ ValidationResult ValidateFrame(const Frame& f)
     ValidationResult r;
     check_I06_descriptor_validity(f, r);
     check_I08_pass_kind_descriptor_alignment(f, r);
+    check_I35_dedicated_terrain_exclusivity(f, r);
     check_I09_onsurface_disambiguation(f, r);
     check_I04_pass_ordering(f, r);
     check_I20_no_new_gl_errors(f, r);

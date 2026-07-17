@@ -66,6 +66,13 @@ void CopyBufferToImage(VkDevice device, VkCommandPool commandPool, VkQueue queue
                        VkBuffer src, VkImage dst,
                        uint32_t width, uint32_t height, uint32_t mipLevel = 0);
 
+// One-shot upload for immutable terrain maps.  The caller owns the image and
+// recreates it on revision change, so its incoming layout is UNDEFINED.  This
+// is deliberately not used for streaming TextureVK assets (which have their
+// own frame-fence lifecycle).
+VkResult UploadImage2D(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool commandPool, VkQueue queue,
+                       ImageVK& image, const void* bytes, std::size_t byteCount);
+
 void DestroyImage(VkDevice device, ImageVK& image);
 
 } // namespace Poseidon::vk

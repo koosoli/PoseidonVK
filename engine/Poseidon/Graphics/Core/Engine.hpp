@@ -38,6 +38,7 @@ namespace frame
 {
 struct Draw;
 struct Frame;
+struct TerrainOpaque;
 } // namespace frame
 } // namespace render
 
@@ -536,6 +537,15 @@ class Engine : public IGraphicsEngine
     // reference and only dereferenced inside the override, so the
     // forward-decl above is sufficient at this seam.
     virtual void EmitDraw(const render::frame::Draw& /*d*/) {}
+
+    // Dedicated terrain capture is intentionally a separate seam from mesh
+    // emission.  Returning false leaves the historical segment renderer active;
+    // a backend may only return true after it has retained every native layer
+    // and immutable map field in the supplied value snapshot.
+    virtual bool WantsDedicatedTerrainOpaque() const { return false; }
+    virtual bool CaptureDedicatedTerrainOpaque(const render::frame::TerrainOpaque& /*terrain*/) { return false; }
+    virtual bool GetDedicatedTerrainOpaque(render::frame::TerrainOpaque& /*terrain*/) const { return false; }
+    virtual std::uint32_t TerrainTextureResourceId(Texture* /*texture*/) { return 0; }
 
     // Optional backend handoff for the immutable frame plan produced by
     // BuildFrame(SceneInputs). Backends that do not consume it keep the

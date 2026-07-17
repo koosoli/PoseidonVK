@@ -480,6 +480,10 @@ class Landscape: public SerializeClass
 
 	RefArray<Object> _arrows;
 	LandCache _segCache;
+	// Incremented at every terrain/map-layer mutation. Dedicated renderer caches
+	// use this rather than pointer/name identity, so editor changes cannot sample
+	// stale height/index/jitter resources.
+	std::uint64_t _terrainRevision = 1;
 
 	//AutoArray<WaterLevel> _waters; // reflection levels in current scene
 
@@ -507,6 +511,7 @@ class Landscape: public SerializeClass
 	int GetTerrainRange() const {return _terrainRange;}
 	int GetTerrainRangeMask() const {return _terrainRangeMask;}
 	int GetTerrainRangeLog() const {return _terrainRangeLog;}
+	std::uint64_t GetTerrainRevision() const { return _terrainRevision; }
 
 	int GetLandRange() const {return _landRange;}
 	int GetLandRangeMask() const {return _landRangeMask;}
@@ -606,6 +611,7 @@ class Landscape: public SerializeClass
 	void OnTimeSkipped(); // time skipped, react accordingly
 
 	Texture *GetTexture( int id ) const;
+	int GetNTextures() const { return _texture.Size(); }
 
 	// data access
 	GeographyInfo GetGeography( int x, int z ) const;
@@ -644,6 +650,9 @@ class Landscape: public SerializeClass
 	
 	void HeightChange( int x, int z, float y );
 	void TextureChange( int x, int z, int id );
+	// Capture the opaque layer at the Landscape->Engine seam. The renderer owns
+	// the value afterwards; grass and water remain on their existing paths.
+	bool CaptureDedicatedTerrainOpaque(const LandBegEnd& visibleRect);
 
 	Object *ObjectCreate
 	(

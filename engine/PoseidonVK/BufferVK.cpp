@@ -415,6 +415,76 @@ void CopyBufferToImage(VkDevice device, VkCommandPool commandPool, VkQueue queue
     EndOneShot(device, commandPool, queue, cb);
 }
 
+VkResult UploadImage2D(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool commandPool, VkQueue queue,
+                       ImageVK& image, const void* bytes, std::size_t byteCount)
+{
+    if (!image.image || !bytes || byteCount == 0 || !commandPool || !queue)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    BufferVK staging;
+    VkResult result = CreateHostVisibleBuffer(physicalDevice, device, byteCount, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging);
+    if (result != VK_SUCCESS)
+        return result;
+    UploadMappedBuffer(staging, bytes, byteCount);
+    VkCommandBufferAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocate.commandPool = commandPool;
+    allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    result = vkAllocateCommandBuffers(device, &allocate, &command);
+    if (result != VK_SUCCESS)
+    {
+        DestroyBuffer(device, staging);
+        return result;
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = vkBeginCommandBuffer(command, &begin);
+    if (result == VK_SUCCESS)
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.image = image.image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &barrier);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {image.width, image.height, 1};
+        vkCmdCopyBufferToImage(command, staging.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &barrier);
+        result = vkEndCommandBuffer(command);
+    }
+    if (result == VK_SUCCESS)
+    {
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command;
+        result = vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
+        if (result == VK_SUCCESS)
+            result = vkQueueWaitIdle(queue);
+    }
+    vkFreeCommandBuffers(device, commandPool, 1, &command);
+    DestroyBuffer(device, staging);
+    return result;
+}
+
 void DestroyImage(VkDevice device, ImageVK& img)
 {
     if (device && img.view)

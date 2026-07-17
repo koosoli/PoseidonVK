@@ -614,7 +614,12 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     LOG_INFO(Graphics, "Vulkan: bootstrap initialized {}x{} mode={} graphics_queue={} present_queue={}", _width,
              _height, static_cast<int>(_windowMode), _graphicsQueueFamily, _presentQueueFamily);
     LOG_WARN(Graphics, "Vulkan: scene raster parity is in progress; water and some legacy clipped geometry may differ "
-                       "from the GL33 renderer.");
+                        "from the GL33 renderer.");
+    // Deliberately explicit: the frame/selection groundwork exists, but the
+    // TerrainVK descriptor-indexed raster + compute passes are not installed
+    // in this milestone.  Do not advertise the generic segment path as CDLOD.
+    LOG_WARN(Graphics, "Vulkan terrain telemetry: mode=legacy-segments reason=TerrainVK-not-installed "
+                       "dedicated-nodes=0 dedicated-batches=0 legacy-draws=tracked-by-FramePlan");
     if (_proceduralSkyEnabled)
         LOG_INFO(Graphics, "Vulkan: HDR cached sky map is enabled");
     if (_volumetricCloudsEnabled)
@@ -679,6 +684,26 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     _lastFrameConstants.lightingParams[3] = _nightEye;
     UpdateCloudConstants();
     UpdateSkyMapInvalidation();
+
+    // Keep the resource/upload and CDLOD selection side of TerrainVK exercised
+    // from the immutable plan. Raster submission remains gated off until the
+    // descriptor-array material set and terrain shadow/sky-visibility passes
+    // are attached; this must not silently replace the legacy receiver early.
+    if (frame.terrainOpaque && _terrainVk.Ready())
+    {
+        if (_terrainVk.Upload(*frame.terrainOpaque))
+        {
+            const auto& terrain = *frame.terrainOpaque;
+            _terrainVk.Select(frame.cameraPosition[0], frame.cameraPosition[1], frame.cameraPosition[2],
+                              terrain.visibleXBegin * terrain.landGrid, terrain.visibleZBegin * terrain.landGrid,
+                              terrain.visibleXEnd * terrain.landGrid, terrain.visibleZEnd * terrain.landGrid);
+        }
+        else
+        {
+            LOG_WARN(Graphics, "Vulkan terrain telemetry: resource upload failed revision={}; legacy renderer remains authoritative",
+                     frame.terrainOpaque->revision);
+        }
+    }
 
     _lastDrawConstants = vk::BuildDrawConstants(frame);
     _lastSceneDrawCommands = vk::BuildSceneDrawCommands(_lastDrawConstants);
@@ -762,7 +787,9 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
                        _textureRegistry.size(), _gpuSceneEnabled, _gpuSceneInstances.size(), _gpuSceneBatches.size(),
                        _gpuSceneCapabilities.drawIndirectCount ? "indirect-count" : "fixed-indirect",
                        _shadowCascadeDrawCounts[0], _shadowCascadeDrawCounts[1], _shadowCascadeDrawCounts[2],
-                       _shadowCascadeDrawCounts[3], _shadowResolvedDrawCount);
+                        _shadowCascadeDrawCounts[3], _shadowResolvedDrawCount);
+            LOG_INFO(Graphics, "Vulkan terrain telemetry: mode=legacy-segments nodes={} revision={} static-ready={}",
+                     _terrainVk.VisibleNodes().size(), _terrainVk.Revision(), _terrainVk.Ready());
             LOG_INFO(Graphics,
                      "Vulkan CPU ms: submit={:.2f} gpu-scene-input={:.2f} shadow-record={:.2f} shadow-prepare={:.2f} shadow-secondary={:.2f} command-record={:.2f} fence-wait={:.2f}",
                      _cpuSubmitFramePlanMs, _cpuGpuSceneInputMs, _cpuShadowRecordMs, _cpuShadowPrepareMs,
@@ -970,12 +997,16 @@ bool EngineVK::PickPhysicalDevice()
         _gpuSceneCapabilities.multiDrawIndirect = features2.features.multiDrawIndirect == VK_TRUE;
         _gpuSceneCapabilities.shaderDrawParameters = features11.shaderDrawParameters == VK_TRUE;
         _gpuSceneCapabilities.drawIndirectCount = features12.drawIndirectCount == VK_TRUE;
+        _terrainDescriptorIndexingSupported = features12.descriptorIndexing == VK_TRUE &&
+                                              features12.runtimeDescriptorArray == VK_TRUE &&
+                                              features12.descriptorBindingPartiallyBound == VK_TRUE &&
+                                              features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
         _maxSamplerAnisotropy = selectedProps.limits.maxSamplerAnisotropy;
         _timestampPeriodNs = selectedProps.limits.timestampPeriod;
 
-        LOG_INFO(Graphics, "Vulkan: selected device '{}' (max anisotropy {}, gpu-scene={}, indirect-count={})",
-                 selectedProps.deviceName, _maxSamplerAnisotropy, _gpuSceneCapabilities.GpuDrivenAvailable(),
-                 _gpuSceneCapabilities.drawIndirectCount);
+        LOG_INFO(Graphics, "Vulkan: selected device '{}' (max anisotropy {}, gpu-scene={}, indirect-count={}, terrain-descriptor-indexing={})",
+                  selectedProps.deviceName, _maxSamplerAnisotropy, _gpuSceneCapabilities.GpuDrivenAvailable(),
+                  _gpuSceneCapabilities.drawIndirectCount, _terrainDescriptorIndexingSupported);
         return true;
     }
 
@@ -1016,6 +1047,13 @@ bool EngineVK::CreateDevice()
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.drawIndirectCount = _gpuSceneCapabilities.drawIndirectCount ? VK_TRUE : VK_FALSE;
+    if (_terrainDescriptorIndexingSupported)
+    {
+        features12.descriptorIndexing = VK_TRUE;
+        features12.runtimeDescriptorArray = VK_TRUE;
+        features12.descriptorBindingPartiallyBound = VK_TRUE;
+        features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    }
     features11.pNext = &features12;
     createInfo.pNext = &features11;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
@@ -6170,6 +6208,7 @@ void EngineVK::Shutdown()
     if (_device)
     {
         vkDeviceWaitIdle(_device);
+        _terrainVk.Destroy(_device);
         ReleaseCompletedTextureResources();
         DestroyShadowCasterMeshes();
         if (_inFlight)

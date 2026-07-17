@@ -8,6 +8,7 @@
 #include <Poseidon/World/World.hpp>
 #include <Poseidon/Graphics/Core/Engine.hpp>
 #include <Poseidon/World/Terrain/Landscape.hpp>
+#include <Poseidon/Graphics/Rendering/Frame/Frame.hpp>
 #include <Poseidon/IO/ParamFileExt.hpp>
 #include <Poseidon/Game/OperMap.hpp>
 #include <Poseidon/Graphics/Rendering/Draw/SpecLods.hpp>
@@ -19,7 +20,9 @@
 
 #include <mutex>
 #include <float.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <Poseidon/Foundation/Common/FltOpts.hpp>
 #include <Poseidon/Foundation/Containers/Array.hpp>
 #include <Poseidon/Foundation/Containers/Array2D.hpp>
@@ -1265,9 +1268,70 @@ GrassMode GrassModes[] = {
 
 const int NGrassModes = sizeof(GrassModes) / sizeof(*GrassModes);
 
+bool Landscape::CaptureDedicatedTerrainOpaque(const LandBegEnd& visibleRect)
+{
+    if (GEngine == nullptr || !GEngine->ConsumesRenderFramePlan() || !GEngine->WantsDedicatedTerrainOpaque())
+        return false;
+
+    render::frame::TerrainOpaque terrain;
+    terrain.revision = _terrainRevision;
+    terrain.heightWidth = static_cast<std::uint32_t>(_terrainRange);
+    terrain.heightHeight = static_cast<std::uint32_t>(_terrainRange);
+    terrain.indexWidth = static_cast<std::uint32_t>(_landRange);
+    terrain.indexHeight = static_cast<std::uint32_t>(_landRange);
+    terrain.terrainGrid = _terrainGrid;
+    terrain.landGrid = _landGrid;
+    terrain.seaLevel = _seaLevelWave;
+    terrain.visibleXBegin = visibleRect.xBeg;
+    terrain.visibleZBegin = visibleRect.zBeg;
+    terrain.visibleXEnd = visibleRect.xEnd;
+    terrain.visibleZEnd = visibleRect.zEnd;
+    if (_terrainRange <= 1 || _landRange <= 0)
+        return false;
+
+    terrain.heights.resize(static_cast<std::size_t>(_terrainRange) * _terrainRange);
+    for (int z = 0; z < _terrainRange; ++z)
+        for (int x = 0; x < _terrainRange; ++x)
+            terrain.heights[static_cast<std::size_t>(z) * _terrainRange + x] = GetHeight(z, x);
+
+    terrain.textureIndices.resize(static_cast<std::size_t>(_landRange) * _landRange);
+    terrain.jitterOffsets.resize(terrain.textureIndices.size() * 2);
+    const int maxLayer = std::max(0, _texture.Size() - 1);
+    for (int z = 0; z < _landRange; ++z)
+    {
+        for (int x = 0; x < _landRange; ++x)
+        {
+            const int layer = std::clamp(GetTexture(z, x), 0, maxLayer);
+            std::uint16_t entry = static_cast<std::uint16_t>(layer);
+            if (!TextureIsSimple(layer))
+                entry |= 0x8000u;
+            const std::size_t at = static_cast<std::size_t>(z) * _landRange + x;
+            terrain.textureIndices[at] = entry;
+            float u = 0.0f, v = 0.0f;
+            GetRandomColor(x, z, u, v);
+            terrain.jitterOffsets[at * 2] = static_cast<std::int8_t>(std::lround(std::clamp(u, -1.0f, 1.0f) * 127.0f));
+            terrain.jitterOffsets[at * 2 + 1] =
+                static_cast<std::int8_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 127.0f));
+        }
+    }
+    terrain.textureLayers.reserve(_texture.Size());
+    for (int layer = 0; layer < _texture.Size(); ++layer)
+        terrain.textureLayers.push_back({GEngine->TerrainTextureResourceId(_texture[layer].texture)});
+
+    return terrain.Valid() && GEngine->CaptureDedicatedTerrainOpaque(terrain);
+}
+
 void Landscape::DrawGround(const LandBegEnd& bigRect, Scene& scene, const GroundLayerInfo& layer)
 {
     auto t0 = TerrainProfile::Now();
+    // Capture before segment generation. Returning true transfers the sole
+    // opaque receiver to the immutable frame plan; alpha grass layers still
+    // traverse the legacy path below.
+    if (!layer.isAlpha && CaptureDedicatedTerrainOpaque(bigRect))
+    {
+        GTerrainProfile.drawGroundCycles += (TerrainProfile::Now() - t0);
+        return;
+    }
     for (int x = bigRect.xBeg; x < bigRect.xEnd; x += LandSegmentSize)
     {
         for (int z = bigRect.zBeg; z < bigRect.zEnd; z += LandSegmentSize)

@@ -912,6 +912,7 @@ void Landscape::HeightChange(int x, int z, float y)
 {
     PoseidonAssert(this_TerrainInRange(x, z));
     SetData(x, z, y);
+	++_terrainRevision;
     // FlushCache();
 }
 
@@ -919,6 +920,7 @@ void Landscape::TextureChange(int x, int z, int id)
 {
     PoseidonAssert(this_InRange(x, z));
     SetTex(x, z, id);
+	++_terrainRevision;
     // FlushCache();
 }
 
@@ -1326,6 +1328,7 @@ void Landscape::Quit() {}
 
 void Landscape::SetTexture(int i, const char* name)
 {
+	++_terrainRevision;
     char aName[64];
     snprintf(aName, sizeof(aName), "%s", (const char*)name);
     strlwr(aName);

@@ -57,6 +57,8 @@ Frame BuildFrame(const SceneInputs& s)
     f.cameraPosition[1] = s.cameraPosition[1];
     f.cameraPosition[2] = s.cameraPosition[2];
     f.shadowInput = s.shadowInput;
+    if (s.dedicatedTerrainOpaque && s.dedicatedTerrainOpaque->Valid())
+        f.terrainOpaque = s.dedicatedTerrainOpaque;
     f.sunMatrix = s.sunMatrix;
     f.sunEnabled = s.sunEnabled;
     f.sunDirection[0] = s.sunDirection[0];
@@ -124,7 +126,23 @@ Frame BuildFrame(const SceneInputs& s)
         tryEmit(FramePassKind::ShadowAccum, s.shadowDraws);
 
     tryEmit(FramePassKind::Sky, s.skyDraws);
-    tryEmit(FramePassKind::TerrainOpaque, s.terrainOpaqueDraws);
+    // A dedicated snapshot replaces, rather than supplements, generic terrain
+    // meshes.  Drawing both would z-fight and would violate revision ownership.
+    if (f.terrainOpaque && f.terrainOpaque->Valid())
+    {
+        Pass terrain;
+        terrain.kind = FramePassKind::TerrainOpaque;
+        f.passes.push_back(std::move(terrain));
+        if (!firstEmitted)
+        {
+            f.passes.back().clearColor = true;
+            f.passes.back().clearDepth = true;
+            f.passes.back().clearStencil = true;
+            firstEmitted = true;
+        }
+    }
+    else
+        tryEmit(FramePassKind::TerrainOpaque, s.terrainOpaqueDraws);
     tryEmit(FramePassKind::WorldOpaque, s.worldOpaqueDraws);
     tryEmit(FramePassKind::WorldCutout, s.worldCutoutDraws);
     tryEmit(FramePassKind::SurfaceOverlay, s.surfaceOverlayDraws);

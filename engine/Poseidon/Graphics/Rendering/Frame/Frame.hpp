@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 // Immutable Frame describing a complete frame's render plan.  Built
@@ -197,6 +198,34 @@ struct ShadowInput
     std::vector<ShadowCaster> casters;
 };
 
+// Immutable map snapshot for a dedicated terrain backend. The texture-index
+// high bit is the legacy transition (ClampU|ClampV) flag; layers remain native
+// texture resources and are never packed into an atlas.
+struct TerrainOpaque
+{
+    std::uint64_t revision = 0;
+    std::uint32_t heightWidth = 0;
+    std::uint32_t heightHeight = 0;
+    std::uint32_t indexWidth = 0;
+    std::uint32_t indexHeight = 0;
+    float terrainGrid = 0.0f;
+    float landGrid = 0.0f;
+    float seaLevel = 0.0f;
+    int visibleXBegin = 0, visibleZBegin = 0, visibleXEnd = 0, visibleZEnd = 0;
+    std::vector<float> heights;
+    std::vector<std::uint16_t> textureIndices;
+    std::vector<std::int8_t> jitterOffsets;
+    std::vector<TextureHandle> textureLayers;
+
+    bool Valid() const noexcept
+    {
+        return heightWidth > 1 && heightHeight > 1 && indexWidth > 0 && indexHeight > 0 && terrainGrid > 0.0f &&
+               landGrid > 0.0f && heights.size() == static_cast<std::size_t>(heightWidth) * heightHeight &&
+               textureIndices.size() == static_cast<std::size_t>(indexWidth) * indexHeight &&
+               jitterOffsets.size() == static_cast<std::size_t>(indexWidth) * indexHeight * 2;
+    }
+};
+
 // Byte offset that glDrawElements' `indices` parameter expects (cast
 // to void* at the call site).  constexpr so the computation lives in
 // one tested place.  Pass indexSize explicitly (the engine's index
@@ -281,6 +310,8 @@ struct Frame
     // list and points at normal scene mesh resources; ShadowDepth is the
     // scheduling marker in passes.
     ShadowInput shadowInput = {};
+    // Mutually exclusive with Draws in the TerrainOpaque pass.
+    std::optional<TerrainOpaque> terrainOpaque;
 
     // Frame-global resources (lights, fog, sun) — separate struct
     // members, can't alias each other or the camera matrices.

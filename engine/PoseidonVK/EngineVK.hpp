@@ -11,6 +11,7 @@
 #include <PoseidonVK/ScenePushConstantsVK.hpp>
 #include <PoseidonVK/ScreenDrawRoutingVK.hpp>
 #include <PoseidonVK/ScreenPushConstantsVK.hpp>
+#include <PoseidonVK/TerrainVK.hpp>
 #include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Graphics/Dummy/EngineDummy.hpp>
 #include <Poseidon/Graphics/Shared/WindowMode.hpp>
@@ -403,6 +404,8 @@ class EngineVK : public EngineDummy
     bool _validationEnabled = false;
     vk::GpuSceneCapabilitiesVK _gpuSceneCapabilities;
     bool _gpuSceneEnabled = false;
+    bool _terrainDescriptorIndexingSupported = false;
+    vk::TerrainVK _terrainVk;
     bool _debugUtilsEnabled = false;
     bool _proceduralSkyEnabled = false;
     bool _skyMapDirty = true;

@@ -176,6 +176,31 @@ TEST_CASE("Frame/BuildFrame: one WorldOpaque draw -> single WorldOpaque pass wit
     REQUIRE(f.passes[0].clearDepth);
 }
 
+TEST_CASE("Frame/BuildFrame: dedicated terrain replaces legacy opaque terrain draws", "[render-frame][build-frame]")
+{
+    auto s = makeMinimal();
+    s.terrainOpaqueDraws.push_back(makeDraw());
+    s.terrainOpaqueDraws.back().descriptor.pass = Poseidon::render::PassKind::TerrainOpaque;
+    v2::TerrainOpaque terrain;
+    terrain.revision = 42;
+    terrain.heightWidth = terrain.heightHeight = 2;
+    terrain.indexWidth = terrain.indexHeight = 1;
+    terrain.terrainGrid = terrain.landGrid = 1.0f;
+    terrain.heights = {0.0f, 0.0f, 0.0f, 0.0f};
+    terrain.textureIndices = {0};
+    terrain.jitterOffsets = {0, 0};
+    terrain.textureLayers = {{1}};
+    s.dedicatedTerrainOpaque = terrain;
+
+    const auto f = Poseidon::render::frame::BuildFrame(s);
+    REQUIRE(f.terrainOpaque.has_value());
+    REQUIRE(f.terrainOpaque->revision == 42);
+    REQUIRE(f.passes.size() == 1);
+    REQUIRE(f.passes[0].kind == v2::FramePassKind::TerrainOpaque);
+    REQUIRE(f.passes[0].draws.empty());
+    REQUIRE(Poseidon::render::frame::ValidateFrame(f).ok());
+}
+
 TEST_CASE("Frame/BuildFrame: empty-cockpit + WorldOpaque -> cockpit pass not emitted", "[render-frame][build-frame]")
 {
     auto s = makeMinimal();
