@@ -13,6 +13,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo RELEASE Release None)
 
 # Version tag embedded in release builds (e.g. rc1, release). Kept as a cache
 # variable for script compatibility, but the actual binary metadata is generated

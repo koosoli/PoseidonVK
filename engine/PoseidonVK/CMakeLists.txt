@@ -91,6 +91,14 @@ set_source_files_properties(${POSEIDON_VK_SHADER_SOURCES} PROPERTIES HEADER_FILE
 add_dependencies(PoseidonVK PoseidonVKShaderHeaders)
 
 find_package(Vulkan REQUIRED)
+get_target_property(vulkan_loc Vulkan::Vulkan IMPORTED_LOCATION)
+if(vulkan_loc)
+    set_target_properties(Vulkan::Vulkan PROPERTIES IMPORTED_LOCATION_RELWITHDEBINFO "${vulkan_loc}")
+endif()
+get_target_property(vulkan_implib Vulkan::Vulkan IMPORTED_IMPLIB)
+if(vulkan_implib)
+    set_target_properties(Vulkan::Vulkan PROPERTIES IMPORTED_IMPLIB_RELWITHDEBINFO "${vulkan_implib}")
+endif()
 find_package(glslang CONFIG REQUIRED)
 
 target_link_libraries(PoseidonVK PUBLIC

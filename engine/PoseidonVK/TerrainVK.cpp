@@ -516,29 +516,45 @@ bool TerrainVK::CreateGrid()
     return true;
 }
 
-bool TerrainVK::CreateRasterPipeline(const RasterInputs& inputs)
+bool TerrainVK::CreateRasterPipeline(const RasterInputs& inputs, std::string& error)
 {
+    error.clear();
     // Do not manufacture visual data just to make a pipeline green. CSM and
     // self-shadow are receiver inputs, not optional visual polish.
     if (!_ready || !inputs.Complete() || !_visualDescriptorsReady || _descriptorSetLayout == VK_NULL_HANDLE ||
         inputs.visualDescriptorSetLayout != _visualDescriptorSetLayout || inputs.visualDescriptorSet != _visualDescriptorSet)
+    {
+        if (!_ready)                                                       error = "TerrainVK not ready";
+        else if (!inputs.Complete())                                       error = "RasterInputs incomplete (CSM/visual bindings missing)";
+        else if (!_visualDescriptorsReady)                                 error = "visual descriptors not ready";
+        else if (_descriptorSetLayout == VK_NULL_HANDLE)                   error = "terrain descriptor set layout null";
+        else                                                               error = "visual descriptor set/layout mismatch";
         return false;
+    }
     DestroyRasterPipeline(_device);
 
     const std::array<VkDescriptorSetLayout, 3> layouts = {
         inputs.frameDescriptorSetLayout, _descriptorSetLayout, inputs.visualDescriptorSetLayout};
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = static_cast<std::uint32_t>(layouts.size());
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(layouts.size());
     layoutInfo.pSetLayouts = layouts.data();
     if (vkCreatePipelineLayout(_device, &layoutInfo, nullptr, &_rasterPipelineLayout) != VK_SUCCESS)
+    {
+        error = "vkCreatePipelineLayout failed";
         return false;
+    }
 
     std::vector<std::uint32_t> vertexSpirv, fragmentSpirv;
-    std::string error;
-    if (!CompileEmbeddedGlsl(kTerrainVertexShader, VK_SHADER_STAGE_VERTEX_BIT, vertexSpirv, error) ||
-        !CompileEmbeddedGlsl(kTerrainFragmentShader, VK_SHADER_STAGE_FRAGMENT_BIT, fragmentSpirv, error))
+    if (!CompileEmbeddedGlsl(kTerrainVertexShader, VK_SHADER_STAGE_VERTEX_BIT, vertexSpirv, error))
     {
+        error = "terrain.vert.glsl compile: " + error;
+        DestroyRasterPipeline(_device);
+        return false;
+    }
+    if (!CompileEmbeddedGlsl(kTerrainFragmentShader, VK_SHADER_STAGE_FRAGMENT_BIT, fragmentSpirv, error))
+    {
+        error = "terrain.frag.glsl compile: " + error;
         DestroyRasterPipeline(_device);
         return false;
     }
@@ -620,6 +636,7 @@ bool TerrainVK::CreateRasterPipeline(const RasterInputs& inputs)
     vkDestroyShaderModule(_device, vertexModule, nullptr);
     if (result != VK_SUCCESS)
     {
+        error = "vkCreateGraphicsPipelines failed (VkResult=" + std::to_string(static_cast<int>(result)) + ")";
         DestroyRasterPipeline(_device);
         return false;
     }
@@ -898,6 +915,12 @@ bool TerrainVK::UpdateLayerDescriptors(const std::vector<LayerBinding>& layers)
         images.push_back(image);
     }
 
+    const std::uint32_t activeCount = static_cast<std::uint32_t>(images.size());
+    if (activeCount < _layerCapacity)
+    {
+        images.resize(_layerCapacity, images[0]);
+    }
+
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = _descriptorSet;
@@ -906,7 +929,7 @@ bool TerrainVK::UpdateLayerDescriptors(const std::vector<LayerBinding>& layers)
     write.descriptorCount = static_cast<std::uint32_t>(images.size());
     write.pImageInfo = images.data();
     vkUpdateDescriptorSets(_device, 1, &write, 0, nullptr);
-    _telemetry.boundLayers = static_cast<std::uint32_t>(images.size());
+    _telemetry.boundLayers = activeCount;
     return true;
 }
 

@@ -11,6 +11,25 @@
 namespace Poseidon
 {
 
+namespace
+{
+std::uint64_t HashMeshVertices(const std::vector<vk::MeshVertexVK>& vertices)
+{
+    // FNV-1a is deliberately tiny here: this guards the unusual case where a
+    // legitimate CPU rebuild marks the buffer dirty but resolves to the same
+    // vertex bytes.  It is never used to infer a mutation; bufferDirty remains
+    // the authoritative producer-to-renderer synchronization contract.
+    constexpr std::uint64_t kOffset = 1469598103934665603ull;
+    constexpr std::uint64_t kPrime = 1099511628211ull;
+    std::uint64_t hash = kOffset;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(vertices.data());
+    const std::size_t byteCount = vertices.size() * sizeof(vk::MeshVertexVK);
+    for (std::size_t i = 0; i < byteCount; ++i)
+        hash = (hash ^ bytes[i]) * kPrime;
+    return hash;
+}
+} // namespace
+
 VertexBufferVK::~VertexBufferVK()
 {
     // The prior frame can still reference this mesh from the main command
@@ -62,6 +81,8 @@ bool VertexBufferVK::Init(EngineVK& engine, const Shape& src, VBType type)
 
     // Upload vertices
     vk::UploadMappedBuffer(vertexBuffer, cpuBuffers.vertices.data(), cpuBuffers.vertices.size() * sizeof(vk::MeshVertexVK));
+    _lastUploadHash = HashMeshVertices(cpuBuffers.vertices);
+    _haveUploadHash = true;
 
     // Create and upload Vulkan index buffer if indices exist
     if (_indexCount > 0)
@@ -139,19 +160,31 @@ bool VertexBufferVK::Init(EngineVK& engine, const Shape& src, VBType type)
 
 void VertexBufferVK::Update(const Shape& src, bool dynamic)
 {
-    if (_dynamic || dynamic || bufferDirty)
+    (void)dynamic;
+    // Do NOT upload merely because a buffer is dynamic.  Forest/terrain-
+    // conforming meshes are dynamic-capable, but after their producer has
+    // published an unchanged frame, re-uploading each instance every frame
+    // burns CPU time and host-visible bandwidth.  All vertex-mutating paths
+    // must call InvalidateBuffer(), which raises bufferDirty before this point.
+    if (!bufferDirty)
+        return;
+
+    const vk::MeshBuffersVK cpuBuffers = vk::BuildMeshBuffersVK(src);
+    if (cpuBuffers.vertices.size() != _vertexCount)
     {
-        const vk::MeshBuffersVK cpuBuffers = vk::BuildMeshBuffersVK(src);
-        if (cpuBuffers.vertices.size() == _vertexCount)
-        {
-            vk::UploadMappedBuffer(vertexBuffer, cpuBuffers.vertices.data(), cpuBuffers.vertices.size() * sizeof(vk::MeshVertexVK));
-        }
-        else
-        {
-            LOG_WARN(Graphics, "Vulkan: Vertex count mismatch on update (expected {}, got {})", _vertexCount, cpuBuffers.vertices.size());
-        }
+        LOG_WARN(Graphics, "Vulkan: Vertex count mismatch on update (expected {}, got {})", _vertexCount, cpuBuffers.vertices.size());
         bufferDirty = false;
+        return;
     }
+
+    const std::uint64_t uploadHash = HashMeshVertices(cpuBuffers.vertices);
+    bufferDirty = false;
+    if (_haveUploadHash && uploadHash == _lastUploadHash)
+        return;
+
+    vk::UploadMappedBuffer(vertexBuffer, cpuBuffers.vertices.data(), cpuBuffers.vertices.size() * sizeof(vk::MeshVertexVK));
+    _lastUploadHash = uploadHash;
+    _haveUploadHash = true;
 }
 
 } // namespace Poseidon

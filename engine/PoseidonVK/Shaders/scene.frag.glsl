@@ -90,6 +90,68 @@ const uint kPassTerrainOpaque = 12u;
 const uint kLightingLit         = 0u;
 const uint kLightingSunDisabled = 1u;
 
+// Receiver-side CSM evaluation mirrors the reference renderer's stable path:
+// move the receiver along its normal, correct the comparison plane per PCF
+// tap, then filter a small tent kernel.  Do not fall back to a constant-bias
+// single comparison here: it produces the familiar acne/peter-panning trade
+// off on tree cutouts and terrain at low sun angles.
+float CascadeShadowVisibility(int cascade, vec3 worldPosition, vec3 worldNormal,
+                              vec3 worldDx, vec3 worldDy)
+{
+    mat4 vp = frame.cascadeVP[cascade];
+    vec3 sunDirection = normalize(-frame.sunDirection.xyz);
+    float cosTheta = clamp(dot(normalize(worldNormal), sunDirection), -1.0, 1.0);
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+
+    // The orthographic VP x row has magnitude 2 / worldWidth.  This derives
+    // a world-space texel size from the actual cascade rather than guessing
+    // a bias from its index.
+    float rowMagnitude = max(length(vec3(vp[0][0], vp[1][0], vp[2][0])), 1e-6);
+    float texelWorld = 2.0 * frame.shadowCtl.w / rowMagnitude;
+    vec3 receiver = worldPosition + normalize(worldNormal) * (2.0 * texelWorld * sinTheta);
+    vec4 clip = vp * vec4(receiver, 1.0);
+    vec3 projected = clip.xyz / clip.w;
+    vec2 uv = vec2(projected.x * 0.5 + 0.5, 0.5 - projected.y * 0.5);
+    if (any(lessThanEqual(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))) ||
+        projected.z <= 0.0 || projected.z >= 1.0)
+        return 1.0;
+
+    // Receiver-plane depth bias (Isidoro): compensate the exact depth slope
+    // at each PCF tap.  The clamp handles a nearly singular screen-to-shadow
+    // UV transform at grazing angles.
+    vec4 clipDx = vp * vec4(worldDx, 0.0);
+    vec4 clipDy = vp * vec4(worldDy, 0.0);
+    vec2 uvDx = vec2(0.5 * clipDx.x, -0.5 * clipDx.y);
+    vec2 uvDy = vec2(0.5 * clipDy.x, -0.5 * clipDy.y);
+    float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    vec2 depthGradient = vec2(0.0);
+    if (abs(determinant) > 1e-12)
+    {
+        depthGradient = vec2(clipDx.z * uvDy.y - clipDy.z * uvDx.y,
+                             clipDy.z * uvDx.x - clipDx.z * uvDy.x) / determinant;
+    }
+    float gradientLimit = 0.02 / max(frame.shadowCtl.w, 1e-6);
+    depthGradient = clamp(depthGradient, vec2(-gradientLimit), vec2(gradientLimit));
+    float planeBias = min(2.0 * frame.shadowCtl.w * (abs(depthGradient.x) + abs(depthGradient.y)), 0.01);
+    float referenceDepth = projected.z - frame.cascadeCtl.z * float((cascade + 1) * (cascade + 1)) - planeBias;
+
+    // A 3x3 tent of hardware comparison samples: each lookup remains the
+    // implementation's bilinear PCF, so this is stable foliage filtering
+    // rather than a noisy stochastic approximation.
+    float filtered = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            vec2 offset = vec2(float(x), float(y)) * frame.shadowCtl.w;
+            float weight = (2.0 - abs(float(x))) * (2.0 - abs(float(y)));
+            float depthOffset = clamp(dot(offset, depthGradient), -0.02, 0.02);
+            filtered += weight * texture(shadowMap, vec4(uv + offset, float(cascade), referenceDepth + depthOffset));
+        }
+    }
+    return filtered * (1.0 / 16.0);
+}
+
 float CloudHash(vec3 p)
 {
     p = fract(p * 0.1031);
@@ -145,6 +207,7 @@ void main()
     uint family    = hasDraw ? drawConstants.draws[drawIdx].shader   : kFamilyNormal;
     uint pass      = hasDraw ? drawConstants.draws[drawIdx].pass     : 0u;
     vec4 tint      = hasDraw ? drawConstants.draws[drawIdx].tint     : vec4(1.0);
+    vec3 receiverNormal = normalize(vWorldNormal);
 
     // Ordinary cutout materials derive alpha from tex0. Reject invisible
     // fragments before lighting and shadow work; Grass is excluded because its
@@ -167,7 +230,7 @@ void main()
         vec3 rawSunDir = frame.sunDirection.xyz;
         vec3 sunDir    = length(rawSunDir) > 0.0001f ? normalize(rawSunDir) : vec3(0.0f, -1.0f, 0.0f);
         float sunOn = (lighting == kLightingLit && frame.lightingParams.x > 0.5) ? 1.0 : 0.0;
-        vec3 normal = normalize(vWorldNormal);
+        vec3 normal = receiverNormal;
         if (pass == kPassTerrainOpaque)
         {
             // Preserve the legacy segment mesh while restoring some local
@@ -176,6 +239,7 @@ void main()
             if (dot(geometricNormal, normal) < 0.0)
                 geometricNormal = -geometricNormal;
             normal = normalize(mix(normal, geometricNormal, 0.35));
+            receiverNormal = normal;
         }
         float diffuse  = max(dot(normal, -sunDir), 0.0f) * sunOn;
         float ambient  = 0.35f;
@@ -356,18 +420,10 @@ void main()
                 if (c >= nC) break;
                 float w = (p == 0) ? (1.0 - bw) : ((wSum <= 0.0) ? 1.0 : ((p == 1) ? bw : 0.0));
                 if (w <= 0.0) continue;
-                vec4 cp = frame.cascadeVP[c] * vec4(vWorldPos, 1.0);
-                vec3 sc = cp.xyz / cp.w;
-                vec2 suv = vec2(sc.x * 0.5 + 0.5, 0.5 - sc.y * 0.5);
-                if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0 && sc.z > 0.0 && sc.z < 1.0)
-                {
-                    float bias = frame.cascadeCtl.z * float(c + 1) * float(c + 1);
-                    // The comparison sampler's linear filter evaluates the
-                    // equivalent 2x2 PCF footprint in one texture operation.
-                    float lit = texture(shadowMap, vec4(suv, float(c), sc.z - bias));
-                    litSum += w * lit;
-                    wSum += w;
-                }
+                float lit = CascadeShadowVisibility(c, vWorldPos, receiverNormal,
+                                                     dFdx(vWorldPos), dFdy(vWorldPos));
+                litSum += w * lit;
+                wSum += w;
             }
             if (wSum > 0.0)
             {

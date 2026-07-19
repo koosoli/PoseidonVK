@@ -34,7 +34,7 @@ void main()
     // Keep the existing cloud compositor exactly display-referred unless HDR is opted in.
     if (composite.hdrEnabled == 0u)
     {
-        outColor = world;
+        outColor = vec4(world.rgb, 1.0);
         return;
     }
 
@@ -82,5 +82,8 @@ void main()
                         0.0, 1.0);
     vec3 srgb = mix(mapped * 12.92, 1.055 * pow(mapped, vec3(1.0 / 2.4)) - 0.055,
                     step(vec3(0.0031308), mapped));
-    outColor = vec4(srgb, world.a);
+    // Always write alpha=1 to the swapchain — the present surface is opaque.
+    // Forwarding world.a causes desktop bleed-through for any scene pixel that
+    // wrote alpha < 1 (e.g. terrain layer textures, sky, transparent geometry).
+    outColor = vec4(srgb, 1.0);
 }

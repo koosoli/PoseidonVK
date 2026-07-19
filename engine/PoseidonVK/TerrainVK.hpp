@@ -132,7 +132,8 @@ class TerrainVK
     // Compiles the CMake-embedded GLSL and creates a pipeline compatible with
     // set 0 (frame/CSM), this object's set 1, and the future visual-input set 2.
     // Returns false until all non-optional visual receiver resources exist.
-    bool CreateRasterPipeline(const RasterInputs& inputs);
+    // On failure, error receives a diagnostic string suitable for logging.
+    bool CreateRasterPipeline(const RasterInputs& inputs, std::string& error);
     void DestroyRasterPipeline(VkDevice device);
     // Records only geometry bindings and one indexed instanced draw.  It does
     // not bind the pipeline or descriptors, so calling it cannot activate the

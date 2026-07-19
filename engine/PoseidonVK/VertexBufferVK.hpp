@@ -3,6 +3,7 @@
 #include <Poseidon/Graphics/Rendering/Primitives/Vertex.hpp>
 #include <PoseidonVK/BufferVK.hpp>
 #include <vulkan/vulkan.h>
+#include <cstdint>
 #include <vector>
 
 namespace Poseidon
@@ -40,6 +41,12 @@ private:
     std::uint32_t _vertexCount = 0;
     std::uint32_t _indexCount = 0;
     bool _dynamic = false;
+    // Dynamic means the producer may mutate this mesh; it does not mean the
+    // bytes changed this frame.  The shape's bufferDirty flag is the mutation
+    // contract, and this hash additionally avoids a PCIe upload when a dirty
+    // rebuild produces identical vertices.
+    bool _haveUploadHash = false;
+    std::uint64_t _lastUploadHash = 0;
 };
 
 } // namespace Poseidon

@@ -868,18 +868,31 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
                      "Vulkan CPU ms: submit={:.2f} gpu-scene-input={:.2f} shadow-record={:.2f} shadow-prepare={:.2f} shadow-secondary={:.2f} command-record={:.2f} fence-wait={:.2f}",
                      _cpuSubmitFramePlanMs, _cpuGpuSceneInputMs, _cpuShadowRecordMs, _cpuShadowPrepareMs,
                      _cpuShadowSecondaryRecordMs, _cpuCommandRecordMs, _cpuFrameFenceWaitMs);
-            std::array<std::uint32_t, 4> transparentDepthCounts = {};
-            for (const std::uint32_t commandIndex : _sceneCommandGroups[static_cast<std::uint32_t>(SceneGroup::Transparent)])
+            // Keep this audit until receiver parity is complete.  In Vulkan a
+            // `DepthMode::Disabled` descriptor deliberately becomes
+            // compare-ALWAYS (RenderStateVK.hpp): such a draw is allowed to
+            // paint over terrain regardless of ordering.  Do not "fix" a
+            // structure-over-ground report by changing terrain order or its
+            // shader; first identify whether the source material explicitly
+            // requested this exceptional depth state.
+            constexpr std::array<const char*, 5> kSceneGroupNames = {
+                "terrain", "opaque", "cutout", "other", "transparent"};
+            for (std::uint32_t group = static_cast<std::uint32_t>(SceneGroup::Terrain);
+                 group <= static_cast<std::uint32_t>(SceneGroup::Transparent); ++group)
             {
-                const auto depth = static_cast<render::DepthMode>(
-                    _lastDrawConstants[_lastSceneDrawCommands[commandIndex].drawIndex].depth);
-                ++transparentDepthCounts[static_cast<std::uint32_t>(depth)];
+                std::array<std::uint32_t, 4> depthCounts = {};
+                for (const std::uint32_t commandIndex : _sceneCommandGroups[group])
+                {
+                    const auto depth = static_cast<render::DepthMode>(
+                        _lastDrawConstants[_lastSceneDrawCommands[commandIndex].drawIndex].depth);
+                    ++depthCounts[static_cast<std::uint32_t>(depth)];
+                }
+                LOG_INFO(Graphics, "Vulkan receiver depth: group={} normal={} readonly={} disabled={} shadow={}",
+                         kSceneGroupNames[group], depthCounts[static_cast<std::uint32_t>(render::DepthMode::Normal)],
+                         depthCounts[static_cast<std::uint32_t>(render::DepthMode::ReadOnly)],
+                         depthCounts[static_cast<std::uint32_t>(render::DepthMode::Disabled)],
+                         depthCounts[static_cast<std::uint32_t>(render::DepthMode::Shadow)]);
             }
-            LOG_INFO(Graphics, "Vulkan transparent depth: normal={} readonly={} disabled={} shadow={}",
-                     transparentDepthCounts[static_cast<std::uint32_t>(render::DepthMode::Normal)],
-                     transparentDepthCounts[static_cast<std::uint32_t>(render::DepthMode::ReadOnly)],
-                     transparentDepthCounts[static_cast<std::uint32_t>(render::DepthMode::Disabled)],
-                     transparentDepthCounts[static_cast<std::uint32_t>(render::DepthMode::Shadow)]);
         }
     }
 
@@ -909,17 +922,27 @@ bool EngineVK::CreateInstance()
 
     std::vector<const char*> extensions(sdlExtensions, sdlExtensions + extensionCount);
 
+    // Debug builds want validation unconditionally. Release builds opt in with
+    // POSEIDON_VK_VALIDATION=1: diagnosing device loss on the field requires
+    // the KHRONOS layer's per-submission error reports.
 #ifdef _DEBUG
+    const bool wantValidation = true;
+#else
+    const bool wantValidation = []
+    {
+        const char* value = std::getenv("POSEIDON_VK_VALIDATION");
+        return value && std::strcmp(value, "0") != 0;
+    }();
+#endif
     const bool hasValidationLayer = HasInstanceLayer(kValidationLayer);
     const bool hasDebugUtils = HasInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     _debugUtilsEnabled = hasDebugUtils;
-    _validationEnabled = hasValidationLayer && hasDebugUtils;
+    _validationEnabled = wantValidation && hasValidationLayer && hasDebugUtils;
     if (_debugUtilsEnabled)
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    if (!_validationEnabled)
+    if (wantValidation && !_validationEnabled)
         LOG_WARN(Graphics, "Vulkan: validation disabled ({}={}, {}={})", kValidationLayer,
                  hasValidationLayer ? "yes" : "no", VK_EXT_DEBUG_UTILS_EXTENSION_NAME, hasDebugUtils ? "yes" : "no");
-#endif
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -6541,8 +6564,17 @@ bool EngineVK::WantsDedicatedTerrainOpaque() const
     // terrain disappear rather than render with incomplete CSM/self-shadow and
     // visual-input bindings. CreateRasterPipeline() itself refuses to create
     // the pipeline until those inputs are declared complete.
+    // TEMPORARY SAFETY GATE: TerrainVK's samplerless native layer array is
+    // compiled and bound, but its sampled material result still differs from
+    // the authoritative legacy receiver.  Do not let the experiment replace
+    // textured ground until the reference material blend is proven in-frame.
+    // Resource capture stays enabled so the remaining GPU path can be tested
+    // without regressing player-visible terrain.
+    constexpr bool kDedicatedTerrainVisualParityValidated = false;
+    if (!kDedicatedTerrainVisualParityValidated)
+        return false;
     const vk::TerrainVK::DescriptorTelemetry& layers = _terrainVk.Telemetry();
-    return _terrainDescriptorIndexingSupported && _terrainVk.Ready() && _terrainVk.VisualInputsReady() &&
+    return _terrainPreviewExperiment && _terrainDescriptorIndexingSupported && _terrainVk.Ready() && _terrainVk.VisualInputsReady() &&
            _terrainVk.RasterPipelineReady() && !_terrainVk.VisibleNodes().empty() && layers.requestedLayers != 0 &&
            layers.boundLayers == layers.requestedLayers && layers.fallbackLayers == 0 && layers.invalidLayers == 0 &&
            layers.invalidLayerIndices == 0;
@@ -6553,7 +6585,10 @@ bool EngineVK::WantsTerrainOpaqueCapture() const
     // This captures immutable map data for TerrainVK's resource producers while
     // preserving legacy segments until every visual descriptor is genuinely
     // ready. It is intentionally broader than WantsDedicatedTerrainOpaque().
-    return _terrainDescriptorIndexingSupported && _terrainVk.Ready();
+    // Dedicated terrain stays opt-in (POSEIDON_VK_TERRAIN_EXPERIMENT=1) while
+    // visual parity is incomplete. Without the experiment, no capture, no
+    // upload, and no dedicated draw: legacy segments remain the sole receiver.
+    return _terrainPreviewExperiment && _terrainDescriptorIndexingSupported && _terrainVk.Ready();
 }
 
 bool EngineVK::CaptureDedicatedTerrainOpaque(const render::frame::TerrainOpaque& terrain)
@@ -6973,9 +7008,15 @@ bool EngineVK::CreateTerrainRasterPipeline()
     inputs.selfShadowBound = true;
     inputs.detailBound = true;
     inputs.skyVisibilityBound = true;
-    if (!_terrainVk.CreateRasterPipeline(inputs))
+    if (!_terrainVk.CreateRasterPipeline(inputs, _terrainVisualInputReason))
     {
-        _terrainVisualInputReason = "terrain shader/pipeline bindings are incompatible with the active render pass";
+        static std::string s_lastLoggedReason;
+        if (s_lastLoggedReason != _terrainVisualInputReason)
+        {
+            LOG_WARN(Graphics, "Vulkan terrain telemetry: terrain raster pipeline creation failed: {}", _terrainVisualInputReason);
+            s_lastLoggedReason = _terrainVisualInputReason;
+        }
+        _terrainVisualInputReason = "terrain raster pipeline creation failed: " + _terrainVisualInputReason;
         return false;
     }
     const bool experimentalFallback =
