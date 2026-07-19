@@ -484,10 +484,9 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     // The cached sky is the Vulkan sky path; retain the environment switch as
     // an explicit compatibility opt-out rather than making it experimental.
     _proceduralSkyEnabled = true;
-    // The current cloud path is an experimental procedural field. Keep the
-    // stable sky as the default until the FP-style world-stable cloud system
-    // and depth-correct composition have visual parity.
-    _volumetricCloudsEnabled = false;
+    // The depth-aware cloud path is the normal Vulkan sky path. Keep the
+    // environment switch for diagnostics and compatibility testing.
+    _volumetricCloudsEnabled = true;
     if (const char* value = std::getenv("POSEIDON_VK_PROCEDURAL_SKY"))
         _proceduralSkyEnabled = std::strcmp(value, "0") != 0;
     if (const char* value = std::getenv("POSEIDON_VK_VOLUMETRIC_CLOUDS"))
@@ -1222,7 +1221,7 @@ bool EngineVK::CreatePipelineLayout()
 bool EngineVK::CreateScenePipelineLayout()
 {
     VkDescriptorSetLayout setLayouts[] = {_frameDescriptorSetLayout, _textureDescriptorSetLayout,
-                                          _textureDescriptorSetLayout};
+                                           _textureDescriptorSetLayout, _skyMapDescriptorSetLayout};
 
     VkPushConstantRange pushConstants{};
     pushConstants.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1231,7 +1230,7 @@ bool EngineVK::CreateScenePipelineLayout()
 
     VkPipelineLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    createInfo.setLayoutCount = 3;
+    createInfo.setLayoutCount = 4;
     createInfo.pSetLayouts = setLayouts;
     createInfo.pushConstantRangeCount = 1;
     createInfo.pPushConstantRanges = &pushConstants;
@@ -5653,8 +5652,14 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         if (_frameDescriptorSet)
         {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 0, 1,
-                                    &_frameDescriptorSet, 0, nullptr);
+                                     &_frameDescriptorSet, 0, nullptr);
         }
+        // The dedicated water material samples the cached HDR sky map at set
+        // 3.  Bind it for this shader family layout up front; non-water draws
+        // do not dynamically access it.
+        if (_skyMapDescriptorSet)
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 3, 1,
+                                    &_skyMapDescriptorSet, 0, nullptr);
 
         // GPU scene batches are constructed only across identical mesh/material
         // state (and never reordered in transparent/cockpit groups).  Compute

@@ -116,7 +116,12 @@ inline RenderPassDescriptor BuildRenderPassDescriptor(const LegacySpec& spec, co
     {
         d.pass = PassKind::WorldWater;
         d.shader = ShaderFamily::Water;
-        d.blend = BlendMode::Opaque;
+        // Water is composited after the opaque/cutout depth has established
+        // the coastline.  It must test that depth without replacing it: the
+        // animated cosmetic surface is not gameplay geometry and must not
+        // occlude later world receivers with its displaced crests.
+        d.blend = BlendMode::AlphaBlend;
+        d.depth = DepthMode::ReadOnly;
         d.fog = Has(routing, Routing::FogDisabled) ? FogMode::Disabled : FogMode::Enabled;
         d.alpha = AlphaMode::Disabled;
         d.texGen = ctx.isIn3DPass ? TexGenMode::Water : TexGenMode::None;

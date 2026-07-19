@@ -320,9 +320,7 @@ __forceinline float Bilint(float y00, float y01, float y10, float y11, float xf,
 
 static Vector3 WaterNormal(0, -1, 0);
 
-// const int WaterFlags = IsWater|SpecularTexture;
-
-const int WaterFlags = SpecularTexture;
+const int WaterFlags = IsWater | SpecularTexture;
 
 #define SEAMS 1
 

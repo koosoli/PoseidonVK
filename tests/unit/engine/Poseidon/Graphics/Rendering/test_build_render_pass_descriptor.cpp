@@ -127,7 +127,8 @@ TEST_CASE("BuildRenderPassDescriptor: water path", "[build-descriptor][phase2]")
     const RenderPassDescriptor d = buildFromInt(IsWater);
     REQUIRE(d.pass == PassKind::WorldWater);
     REQUIRE(d.shader == ShaderFamily::Water);
-    REQUIRE(d.blend == BlendMode::Opaque);
+    REQUIRE(d.blend == BlendMode::AlphaBlend);
+    REQUIRE(d.depth == DepthMode::ReadOnly);
     REQUIRE(d.fog == FogMode::Enabled);
     REQUIRE(d.texGen == TexGenMode::Water);
 }

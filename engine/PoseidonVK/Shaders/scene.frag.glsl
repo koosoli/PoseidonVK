@@ -74,6 +74,10 @@ layout(set = 0, binding = 1, std430) readonly buffer DrawConstantsBuffer
 layout(set = 0, binding = 2) uniform sampler2DArrayShadow shadowMap;
 layout(set = 1, binding = 0) uniform sampler2D tex0;
 layout(set = 2, binding = 0) uniform sampler2D tex1;
+// Cached equirectangular HDR sky radiance.  This is a real environment
+// reflection resource; planar terrain/scene reflection and refraction are not
+// part of this milestone.
+layout(set = 3, binding = 0) uniform sampler2D skyMap;
 
 // ShaderFamily enum values (mirrors render::ShaderFamily in RenderPassDescriptor.hpp)
 // 0 = Normal   1 = Shadow   2 = Water   3 = Detail   4 = Grass   5 = Flat
@@ -333,20 +337,28 @@ void main()
     }
     else if (family == kFamilyWater)
     {
-        // Animated geometric waves arrive from scene.vert.  Combine the
-        // legacy bump with that normal, then use Fresnel to reflect the live
-        // sky/sun rather than painting a fixed white highlight onto water.
+        // Animated Gerstner geometry arrives from scene.vert.  The authored
+        // bump adds only micro-normal breakup; it is not a texture-only water
+        // approximation.
         vec3 bumpN = normalize(c1.rgb * 2.0 - 1.0);
-        vec3 n = normalize(mix(normalize(vWorldNormal), bumpN, 0.38));
+        vec3 n = normalize(mix(normalize(vWorldNormal), bumpN, 0.22));
         vec3 viewDir = normalize(-vWorldPos);
-        float fresnel = pow(1.0 - max(dot(n, viewDir), 0.0), 5.0);
+        float ndv = max(dot(n, viewDir), 0.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
         vec3 sunDir = normalize(-frame.sunDirection.xyz);
-        float sunGlint = pow(max(dot(reflect(-sunDir, n), viewDir), 0.0), 96.0);
-        vec3 horizon = mix(frame.fogColor.rgb * 0.65, vec3(0.32, 0.48, 0.68),
-                           clamp(sunDir.y * 0.5 + 0.5, 0.0, 1.0));
-        vec3 reflectedSky = horizon + vec3(1.0, 0.78, 0.48) * sunGlint;
-        baseColor = mix(c0.rgb * light, reflectedSky, 0.18 + 0.72 * fresnel);
-        baseAlpha = clamp(0.38 + 0.52 * fresnel, 0.0, 0.92);
+        vec3 reflectionDir = reflect(-viewDir, n);
+        float skyU = 0.5 + atan(reflectionDir.z, reflectionDir.x) / 6.2831853;
+        float skyV = acos(clamp(reflectionDir.y, -1.0, 1.0)) / 3.14159265;
+        vec3 reflectedSky = textureLod(skyMap, vec2(skyU, skyV), 0.0).rgb;
+        // Energy-normalised HDR Blinn-Phong sun disc.  It remains unclamped
+        // until the common fog/output path so HDR targets retain bloom energy.
+        vec3 halfVector = normalize(sunDir + viewDir);
+        float sunUp = smoothstep(0.0, 0.06, sunDir.y);
+        float sunGlint = pow(max(dot(n, halfVector), 0.0), 220.0) * (222.0 / 25.1327412) * sunUp;
+        vec3 body = mix(vec3(0.025, 0.19, 0.23), vec3(0.004, 0.035, 0.075), clamp(1.0 - ndv, 0.0, 1.0));
+        baseColor = mix(body * (0.35 + 0.25 * max(dot(n, sunDir), 0.0)), reflectedSky, fresnel);
+        baseColor += vec3(1.0, 0.86, 0.62) * sunGlint * 5.0;
+        baseAlpha = clamp(0.42 + 0.54 * fresnel, 0.0, 0.96);
     }
     else if (family == kFamilyFlat)
     {
@@ -408,8 +420,10 @@ void main()
                           drawPass == kPassWorldCutout || drawPass == kPassSurfaceOverlay;
     // Fog is an atmospheric effect, not a shadow-receiver classification. Roads
     // intentionally disable fog yet still need the CSM darkening that terrain gets.
-    bool shadowFamily = family != kFamilyWater &&
-                        (family != kFamilyFlat || drawPass == kPassSurfaceOverlay);
+    // Water is a read-only depth receiver, never a caster.  Its Gerstner
+    // normal feeds the same receiver-plane CSM evaluation as opaque geometry;
+    // this removes direct sheen/glint under headland and object shadows.
+    bool shadowFamily = family != kFamilyFlat || drawPass == kPassSurfaceOverlay;
     if (shadowReceiver && shadowFamily && frame.shadowCtl.x > 0.5)
     {
         int nC = int(frame.cascadeCtl.x);

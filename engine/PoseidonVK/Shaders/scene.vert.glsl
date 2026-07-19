@@ -32,9 +32,23 @@ layout(set = 0, binding = 0, std140) uniform FrameConstants
     vec4 localLightDirection[8];
     vec4 grassParams;
     vec4 time;
+    vec4 shadowCtl;
+    mat4 cascadeVP[4];
+    vec4 cascadeSplits;
+    vec4 cascadeCtl;
+    vec4 camFwd;
     vec4 camPos;
     vec4 specularColor;
     vec4 specularCtrl;
+    vec4 cloudOrigin;
+    vec4 wind;
+    vec4 windOffset;
+    vec4 cloudWeather;
+    vec4 cloudGeometry;
+    vec4 moonDirection;
+    vec4 moonUpAndPhase;
+    vec4 starsOrientation[3];
+    vec4 skyVisibility;
 } frame;
 
 // Per-draw constants uploaded by the host from the backend-neutral frame plan.
@@ -105,15 +119,41 @@ void main()
     uint initialTexGen = hasDrawConstants ? drawConstants.draws[drawIndex].texGen : kTexGenNone;
     if (initialTexGen == kTexGenWater)
     {
+        // Four gentle deep-water Gerstner components.  This is deliberately
+        // cosmetic: Landscape remains the flat sea-level authority for
+        // collision/buoyancy.  Wind rotates and advects the field without a
+        // CPU mesh rebuild, while the amplitude stays below legacy maxWave.
         float t = frame.time.x;
         vec2 p = worldPos.xz;
-        float a = dot(p, vec2(0.021, 0.014)) + t * 0.75;
-        float b = dot(p, vec2(-0.013, 0.026)) - t * 0.48;
-        worldPos.y += sin(a) * 0.22 + sin(b) * 0.13;
-        vec3 waveNormal = normalize(vec3(-0.021 * cos(a) * 0.22 + 0.013 * cos(b) * 0.13,
-                                         1.0,
-                                        -0.014 * cos(a) * 0.22 - 0.026 * cos(b) * 0.13));
-        worldNormal = normalize(mix(worldNormal, waveNormal, 0.85));
+        vec2 wind = frame.wind.xz;
+        vec2 windDir = dot(wind, wind) > 0.0001 ? normalize(wind) : vec2(0.98, 0.18);
+        const vec2 dirs[4] = vec2[4](windDir, vec2(-windDir.y, windDir.x),
+                                      normalize(windDir + vec2(-0.55, 0.83)),
+                                      normalize(windDir + vec2(0.72, -0.46)));
+        const float wavelengths[4] = float[4](27.0, 15.0, 9.0, 5.5);
+        const float amplitudes[4] = float[4](0.110, 0.070, 0.045, 0.030);
+        vec3 displacement = vec3(0.0);
+        vec3 tangentX = vec3(1.0, 0.0, 0.0);
+        vec3 tangentZ = vec3(0.0, 0.0, 1.0);
+        for (int i = 0; i < 4; ++i)
+        {
+            float k = 6.2831853 / wavelengths[i];
+            float omega = sqrt(9.81 * k);
+            float phase = k * dot(dirs[i], p) - omega * t;
+            float steepness = 0.55 / max(k * amplitudes[i] * 4.0, 0.001);
+            float s = sin(phase);
+            float c = cos(phase);
+            displacement.xz += steepness * amplitudes[i] * dirs[i] * c;
+            displacement.y += amplitudes[i] * s;
+            tangentX += vec3(-dirs[i].x * dirs[i].x * steepness * amplitudes[i] * k * s,
+                              dirs[i].x * amplitudes[i] * k * c,
+                              -dirs[i].x * dirs[i].y * steepness * amplitudes[i] * k * s);
+            tangentZ += vec3(-dirs[i].x * dirs[i].y * steepness * amplitudes[i] * k * s,
+                              dirs[i].y * amplitudes[i] * k * c,
+                              -dirs[i].y * dirs[i].y * steepness * amplitudes[i] * k * s);
+        }
+        worldPos.xyz += displacement;
+        worldNormal = normalize(mix(worldNormal, cross(tangentZ, tangentX), 0.92));
     }
 
     // Full camera transform mirroring the GL33 vsTransform convention
