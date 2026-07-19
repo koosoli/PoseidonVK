@@ -78,6 +78,9 @@ layout(set = 2, binding = 0) uniform sampler2D tex1;
 // reflection resource; planar terrain/scene reflection and refraction are not
 // part of this milestone.
 layout(set = 3, binding = 0) uniform sampler2D skyMap;
+// Separate copy of receiver depth made between the opaque/cutout pass and the
+// read-only water pass. It is deliberately not the active depth attachment.
+layout(set = 4, binding = 0) uniform sampler2D waterOpaqueDepth;
 
 // ShaderFamily enum values (mirrors render::ShaderFamily in RenderPassDescriptor.hpp)
 // 0 = Normal   1 = Shadow   2 = Water   3 = Detail   4 = Grass   5 = Flat
@@ -359,6 +362,55 @@ void main()
         baseColor = mix(body * (0.35 + 0.25 * max(dot(n, sunDir), 0.0)), reflectedSky, fresnel);
         baseColor += vec3(1.0, 0.86, 0.62) * sunGlint * 5.0;
         baseAlpha = clamp(0.42 + 0.54 * fresnel, 0.0, 0.96);
+
+        // Vulkan uses a 0..1 device-depth projection here (see scene.vert).
+        // Reconstruct the view-space Z from the actual projection coefficients
+        // rather than assuming GL's -1..1 convention.  Scaling the Z delta by
+        // the water pixel's view ray gives an underwater column in world units.
+        if (frame.time.z > 0.5)
+        {
+            vec2 depthUv = gl_FragCoord.xy / max(frame.viewport.zw, vec2(1.0));
+            float receiverDepth = texture(waterOpaqueDepth, depthUv).r;
+            float surfaceDepth = gl_FragCoord.z;
+            vec4 surfaceView = frame.view * vec4(vWorldPos, 1.0);
+            float p22 = frame.projection[2][2];
+            float p23 = frame.projection[2][3];
+            float p32 = frame.projection[3][2];
+            float p33 = frame.projection[3][3];
+            float denominator = receiverDepth * p23 - p22;
+            float receiverZ = abs((p32 - receiverDepth * p33) / max(abs(denominator), 1e-5));
+            float surfaceZ = max(abs(surfaceView.z), 1e-4);
+            float rayScale = length(surfaceView.xyz) / surfaceZ;
+            // A clear depth value is sky/background, not a seabed receiver. It
+            // takes the deep-water branch without inventing a shoreline.
+            bool hasReceiver = receiverDepth < 0.99999 && receiverDepth > surfaceDepth + 1e-6;
+            float column = hasReceiver ? max(0.0, receiverZ - surfaceZ) * rayScale : 28.0;
+
+            // Beer-Lambert extinction: red attenuates first, leaving the
+            // familiar cyan shallow band and blue-green deep water. Because the
+            // world colour is not sampled while attached for writing, this is a
+            // forward scattering approximation expressed through alpha blending.
+            vec3 transmission = exp(-vec3(0.20, 0.065, 0.028) * column);
+            float deepness = 1.0 - dot(transmission, vec3(0.3333333));
+            vec3 shallowScatter = vec3(0.045, 0.34, 0.37);
+            vec3 deepScatter = vec3(0.004, 0.075, 0.14);
+            vec3 absorptionBody = mix(shallowScatter, deepScatter, smoothstep(0.12, 0.90, deepness));
+            float shoreFade = hasReceiver ? smoothstep(0.07, 1.35, column) : 1.0;
+
+            // Procedural swash is tied to the same moving world-space surface
+            // as the Gerstner field. It is cosmetic only: no landscape or sea
+            // level data is changed by this receiver-side effect.
+            float shoreNoise = fract(sin(dot(floor(vWorldPos.xz * 0.72) +
+                                             floor(vWorldPos.xz * 2.13), vec2(127.1, 311.7))) * 43758.5453);
+            float waveRidge = 0.5 + 0.5 * sin(dot(vWorldPos.xz, vec2(0.82, 0.57)) * 1.8 - frame.time.x * 1.7);
+            float foamBand = hasReceiver ? (1.0 - smoothstep(0.30, 2.40, column)) : 0.0;
+            float foam = foamBand * smoothstep(0.35, 0.78, mix(shoreNoise, waveRidge, 0.55));
+            absorptionBody = mix(absorptionBody, vec3(0.82, 0.94, 0.91), foam * 0.82);
+            baseColor = mix(baseColor, absorptionBody, (1.0 - fresnel) * (0.45 + 0.55 * deepness));
+            baseColor += vec3(0.15, 0.22, 0.20) * foam;
+            baseAlpha *= shoreFade;
+            baseAlpha = max(baseAlpha, foam * 0.62);
+        }
     }
     else if (family == kFamilyFlat)
     {

@@ -148,6 +148,9 @@ class EngineVK : public EngineDummy
     bool CreateSwapchain();
     bool CreateDepthResources();
     bool CreateWorldTarget();
+    bool CreateWaterDepthResources();
+    bool CreateWaterDepthDescriptorLayout();
+    bool CreateWaterDepthDescriptorSet();
     bool CreateWorldPrepassTarget();
     bool CreateWorldCompositeDescriptorLayout();
     bool CreateWorldCompositeDescriptorSet();
@@ -231,6 +234,8 @@ class EngineVK : public EngineDummy
     void DestroyScenePipelineLayout();
     void DestroyDepthResources();
     void DestroyWorldTarget();
+    void DestroyWaterDepthResources();
+    void DestroyWaterDepthDescriptorResources();
     void DestroyWorldPrepassTarget();
     void DestroyWorldCompositeDescriptorResources();
     void DestroyWorldCompositePipelineLayout();
@@ -318,6 +323,8 @@ class EngineVK : public EngineDummy
     vk::PipelineCacheVK _cockpitScenePipelineCache;
     VkPipeline _worldLateScenePipeline = VK_NULL_HANDLE;
     vk::PipelineCacheVK _worldLateScenePipelineCache;
+    VkPipeline _waterScenePipeline = VK_NULL_HANDLE;
+    vk::PipelineCacheVK _waterScenePipelineCache;
     // 2D / screen-space pipeline resources.
     VkPipeline _screenPipeline = VK_NULL_HANDLE;
     VkPipeline _screenOverlayPipeline = VK_NULL_HANDLE;
@@ -330,6 +337,12 @@ class EngineVK : public EngineDummy
     VkDescriptorSet _skyMapDescriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout _skyMapPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout _skyMapBakePipelineLayout = VK_NULL_HANDLE;
+    // Water samples this copied opaque-only depth image, never its active depth
+    // attachment. The snapshot is optional on depth formats without transfer.
+    VkDescriptorSetLayout _waterDepthDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _waterDepthDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet _waterDepthDescriptorSet = VK_NULL_HANDLE;
+    VkSampler _waterDepthSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout _volumetricCloudDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool _volumetricCloudDescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _volumetricCloudDescriptorSet = VK_NULL_HANDLE;
@@ -382,6 +395,11 @@ class EngineVK : public EngineDummy
     VkDeviceMemory _worldDepthImageMemory = VK_NULL_HANDLE;
     VkImageView _worldDepthImageView = VK_NULL_HANDLE;
     VkFramebuffer _worldFramebuffer = VK_NULL_HANDLE;
+    VkImage _waterDepthImage = VK_NULL_HANDLE;
+    VkDeviceMemory _waterDepthImageMemory = VK_NULL_HANDLE;
+    VkImageView _waterDepthImageView = VK_NULL_HANDLE;
+    VkRenderPass _waterRenderPass = VK_NULL_HANDLE;
+    VkFramebuffer _waterFramebuffer = VK_NULL_HANDLE;
     VkImage _worldNormalImage = VK_NULL_HANDLE;
     VkDeviceMemory _worldNormalImageMemory = VK_NULL_HANDLE;
     VkImageView _worldNormalImageView = VK_NULL_HANDLE;
@@ -446,6 +464,8 @@ class EngineVK : public EngineDummy
     bool _volumetricCloudsEnabled = false;
     bool _cloudHistoryValid = false;
     bool _hdrEnabled = true;
+    bool _waterDepthOpticsActive = false;
+    bool _waterDepthSnapshotInitialized = false;
     bool _temporalExposureEnabled = false;
     float _hdrExposure = 1.0f;
     bool _eyeAdaptationHistoryValid = false;
@@ -479,7 +499,7 @@ class EngineVK : public EngineDummy
     std::array<float, 40> _skyMapRequestedInputs = {};
     std::vector<vk::DrawConstantsVK> _lastDrawConstants;
     std::vector<vk::SceneDrawCommandVK> _lastSceneDrawCommands;
-    std::array<std::vector<std::uint32_t>, 7> _sceneCommandGroups;
+    std::array<std::vector<std::uint32_t>, 8> _sceneCommandGroups;
     std::vector<vk::GpuSceneInstanceVK> _gpuSceneInstances;
     std::vector<vk::GpuSceneBatchVK> _gpuSceneBatches;
     vk::MeshRegistryVK _meshRegistry;

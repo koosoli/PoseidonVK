@@ -97,6 +97,7 @@ enum class SceneGroup : std::uint32_t
     Terrain,
     Opaque,
     Cutout,
+    Water,
     Other,
     Transparent,
     WorldLate,
@@ -571,7 +572,8 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
          !CreateGpuTimingResources() || !CreateFrameConstantsBuffer() ||
           (_volumetricCloudsEnabled && !CreateCloudConstantsBuffer()) || !CreateBootstrapVertexBuffer() || !CreateBootstrapIndexBuffer() ||
          !CreateSceneVertexBuffer() || !CreateSceneIndexBuffer() || !EnsureDrawConstantsBufferCapacity(1) ||
-          !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() || !CreateSkyMapDescriptorLayout() ||
+           !CreateFrameDescriptorLayout() || !CreateTextureDescriptorLayout() || !CreateSkyMapDescriptorLayout() ||
+           !CreateWaterDepthDescriptorLayout() ||
             (_volumetricCloudsEnabled && (!CreateVolumetricCloudDescriptorLayout() || !CreateCloudComputeDescriptorLayouts())) ||
            (WorldCompositionActive() && !CreateWorldCompositeDescriptorLayout()) || !CreatePipelineLayout() ||
            (_temporalExposureEnabled && !CreateEyeAdaptationDescriptorLayout()) ||
@@ -597,7 +599,7 @@ bool EngineVK::Initialize(int width, int height, bool windowed, int bitsPerPixel
     }
 
     if (!CreateSkyMapResources() || !CreateSkyMapDescriptorSet() ||
-           !CreateSwapchain() ||
+           !CreateSwapchain() || !CreateWaterDepthDescriptorSet() ||
              (_volumetricCloudsEnabled && (!CreateVolumetricCloudDescriptorSet() || !CreateCloudComputeDescriptorSets())) ||
            (_temporalExposureEnabled && !CreateEyeAdaptationDescriptorSet()) ||
            (WorldCompositionActive() && !CreateWorldCompositeDescriptorSet()) ||
@@ -723,6 +725,7 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
     // Cloud displacement must advance with simulation weather, not wall-clock
     // presentation time. Pauses and replay therefore preserve the cloud field.
     _lastFrameConstants.time[1] = frame.atmosphere.cloudTime;
+    _lastFrameConstants.time[2] = _waterDepthOpticsActive ? 1.0f : 0.0f;
     _lastFrameConstants.wind[3] = _volumetricCloudsEnabled ? 1.0f : 0.0f;
     _lastFrameConstants.lightingParams[3] = _nightEye;
     UpdateCloudConstants();
@@ -804,10 +807,12 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
                     group = SceneGroup::Cutout;
                     break;
                 case render::PassKind::SurfaceOverlay:
-                case render::PassKind::WorldWater:
                 case render::PassKind::WorldShadow:
                 case render::PassKind::WorldLight:
                     group = SceneGroup::Other;
+                    break;
+                case render::PassKind::WorldWater:
+                    group = SceneGroup::Water;
                     break;
                 case render::PassKind::WorldTransparent:
                     // Preserve the scene's back-to-front order. Batching these
@@ -878,8 +883,8 @@ void EngineVK::SubmitFramePlan(const render::frame::Frame& frame)
             // structure-over-ground report by changing terrain order or its
             // shader; first identify whether the source material explicitly
             // requested this exceptional depth state.
-            constexpr std::array<const char*, 5> kSceneGroupNames = {
-                "terrain", "opaque", "cutout", "other", "transparent"};
+            constexpr std::array<const char*, 6> kSceneGroupNames = {
+                "terrain", "opaque", "cutout", "water", "other", "transparent"};
             for (std::uint32_t group = static_cast<std::uint32_t>(SceneGroup::Terrain);
                  group <= static_cast<std::uint32_t>(SceneGroup::Transparent); ++group)
             {
@@ -1221,7 +1226,8 @@ bool EngineVK::CreatePipelineLayout()
 bool EngineVK::CreateScenePipelineLayout()
 {
     VkDescriptorSetLayout setLayouts[] = {_frameDescriptorSetLayout, _textureDescriptorSetLayout,
-                                           _textureDescriptorSetLayout, _skyMapDescriptorSetLayout};
+                                            _textureDescriptorSetLayout, _skyMapDescriptorSetLayout,
+                                            _waterDepthDescriptorSetLayout};
 
     VkPushConstantRange pushConstants{};
     pushConstants.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1230,7 +1236,7 @@ bool EngineVK::CreateScenePipelineLayout()
 
     VkPipelineLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    createInfo.setLayoutCount = 4;
+    createInfo.setLayoutCount = 5;
     createInfo.pSetLayouts = setLayouts;
     createInfo.pushConstantRangeCount = 1;
     createInfo.pPushConstantRanges = &pushConstants;
@@ -2836,13 +2842,29 @@ bool EngineVK::CreateWorldTarget()
     };
 
     const VkFormat worldColorFormat = _hdrEnabled ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
+    VkFormatProperties depthProperties{};
+    vkGetPhysicalDeviceFormatProperties(_physicalDevice, _depthFormat, &depthProperties);
+    const VkFormatFeatureFlags waterDepthFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                                    VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                                                    VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    const bool canCopySampleWaterDepth =
+        (depthProperties.optimalTilingFeatures & waterDepthFeatures) == waterDepthFeatures;
+    if (!canCopySampleWaterDepth)
+    {
+        LOG_WARN(Graphics,
+                 "Vulkan water: depth optics disabled; format {} lacks sampled depth-copy support (required=0x{:x}, available=0x{:x})",
+                 static_cast<int>(_depthFormat), static_cast<unsigned>(waterDepthFeatures),
+                 static_cast<unsigned>(depthProperties.optimalTilingFeatures));
+    }
+
     if (!createImage(worldColorFormat,
                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                       VK_IMAGE_ASPECT_COLOR_BIT, _worldColorImage, _worldColorImageMemory, _worldColorImageView,
                       _hdrEnabled ? "PoseidonVK World HDR Color" : "PoseidonVK World UNORM Color") ||
-        !createImage(_depthFormat,
-                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_SAMPLED_BIT,
+         !createImage(_depthFormat,
+                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                           (canCopySampleWaterDepth ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0),
                      VK_IMAGE_ASPECT_DEPTH_BIT, _worldDepthImage, _worldDepthImageMemory, _worldDepthImageView,
                      "PoseidonVK World Depth"))
     {
@@ -2865,7 +2887,93 @@ bool EngineVK::CreateWorldTarget()
         return false;
     }
     SetObjectName(VK_OBJECT_TYPE_FRAMEBUFFER, VulkanObjectHandle(_worldFramebuffer), "PoseidonVK World Framebuffer");
+    return CreateWaterDepthResources();
+}
+
+bool EngineVK::CreateWaterDepthDescriptorLayout()
+{
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &binding;
+    if (vkCreateDescriptorSetLayout(_device, &createInfo, nullptr, &_waterDepthDescriptorSetLayout) != VK_SUCCESS)
+        return false;
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VulkanObjectHandle(_waterDepthDescriptorSetLayout),
+                  "PoseidonVK Water Depth Descriptor Layout");
     return true;
+}
+
+bool EngineVK::CreateWaterDepthDescriptorSet()
+{
+    if (!_waterDepthDescriptorSetLayout || !_skyMap.view || !_skyMapSampler)
+        return false;
+    if (_waterDepthDescriptorPool)
+        vkDestroyDescriptorPool(_device, _waterDepthDescriptorPool, nullptr);
+    _waterDepthDescriptorPool = VK_NULL_HANDLE;
+    _waterDepthDescriptorSet = VK_NULL_HANDLE;
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    if (vkCreateDescriptorPool(_device, &poolInfo, nullptr, &_waterDepthDescriptorPool) != VK_SUCCESS)
+        return false;
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = _waterDepthDescriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &_waterDepthDescriptorSetLayout;
+    if (vkAllocateDescriptorSets(_device, &allocateInfo, &_waterDepthDescriptorSet) != VK_SUCCESS)
+        return false;
+    if (!_waterDepthSampler)
+    {
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.maxLod = 0.0f;
+        if (vkCreateSampler(_device, &samplerInfo, nullptr, &_waterDepthSampler) != VK_SUCCESS)
+            return false;
+    }
+    // A valid fallback descriptor is retained on unsupported formats. The
+    // shader's capability branch never samples it, but Vulkan still receives a
+    // complete non-indexed descriptor set.
+    const VkImageView view = _waterDepthOpticsActive ? _waterDepthImageView : _skyMap.view;
+    VkDescriptorImageInfo imageInfo{_waterDepthSampler, view,
+                                    _waterDepthOpticsActive ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = _waterDepthDescriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(_device, 1, &write, 0, nullptr);
+    SetObjectName(VK_OBJECT_TYPE_DESCRIPTOR_POOL, VulkanObjectHandle(_waterDepthDescriptorPool),
+                  "PoseidonVK Water Depth Descriptor Pool");
+    return true;
+}
+
+void EngineVK::DestroyWaterDepthDescriptorResources()
+{
+    if (_waterDepthDescriptorPool) vkDestroyDescriptorPool(_device, _waterDepthDescriptorPool, nullptr);
+    if (_waterDepthSampler) vkDestroySampler(_device, _waterDepthSampler, nullptr);
+    if (_waterDepthDescriptorSetLayout) vkDestroyDescriptorSetLayout(_device, _waterDepthDescriptorSetLayout, nullptr);
+    _waterDepthDescriptorPool = VK_NULL_HANDLE;
+    _waterDepthDescriptorSet = VK_NULL_HANDLE;
+    _waterDepthSampler = VK_NULL_HANDLE;
+    _waterDepthDescriptorSetLayout = VK_NULL_HANDLE;
 }
 
 bool EngineVK::CreateWorldPrepassTarget()
@@ -3009,6 +3117,7 @@ void EngineVK::DestroyWorldPrepassTarget()
 
 void EngineVK::DestroyWorldTarget()
 {
+    DestroyWaterDepthResources();
     DestroyWorldPrepassTarget();
     if (_worldFramebuffer)
     {
@@ -3029,6 +3138,169 @@ void EngineVK::DestroyWorldTarget()
     };
     destroyImage(_worldColorImageView, _worldColorImage, _worldColorImageMemory);
     destroyImage(_worldDepthImageView, _worldDepthImage, _worldDepthImageMemory);
+}
+
+bool EngineVK::CreateWaterDepthResources()
+{
+    DestroyWaterDepthResources();
+    if (!_worldColorImageView || !_worldDepthImageView)
+        return false;
+
+    // This pass owns the transparent-water write. Its depth attachment is
+    // read-only; depth optics sample _waterDepthImage, an explicit copy made
+    // after terrain/opaque/cutout rendering, never this attachment.
+    VkAttachmentDescription attachments[2] = {};
+    attachments[0].format = _hdrEnabled ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    attachments[1].format = _depthFormat;
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    VkAttachmentReference color{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color;
+    subpass.pDepthStencilAttachment = &depth;
+    VkSubpassDependency dependencies[2] = {};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
+                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                                   VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkRenderPassCreateInfo passInfo{};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    passInfo.attachmentCount = 2;
+    passInfo.pAttachments = attachments;
+    passInfo.subpassCount = 1;
+    passInfo.pSubpasses = &subpass;
+    passInfo.dependencyCount = 2;
+    passInfo.pDependencies = dependencies;
+    if (vkCreateRenderPass(_device, &passInfo, nullptr, &_waterRenderPass) != VK_SUCCESS)
+        return false;
+    VkImageView views[] = {_worldColorImageView, _worldDepthImageView};
+    VkFramebufferCreateInfo framebufferInfo{};
+    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass = _waterRenderPass;
+    framebufferInfo.attachmentCount = 2;
+    framebufferInfo.pAttachments = views;
+    framebufferInfo.width = _swapchainExtent.width;
+    framebufferInfo.height = _swapchainExtent.height;
+    framebufferInfo.layers = 1;
+    if (vkCreateFramebuffer(_device, &framebufferInfo, nullptr, &_waterFramebuffer) != VK_SUCCESS)
+    {
+        DestroyWaterDepthResources();
+        return false;
+    }
+    const auto destroySnapshot = [&]()
+    {
+        if (_waterDepthImageView) vkDestroyImageView(_device, _waterDepthImageView, nullptr);
+        if (_waterDepthImage) vkDestroyImage(_device, _waterDepthImage, nullptr);
+        if (_waterDepthImageMemory) vkFreeMemory(_device, _waterDepthImageMemory, nullptr);
+        _waterDepthImageView = VK_NULL_HANDLE;
+        _waterDepthImage = VK_NULL_HANDLE;
+        _waterDepthImageMemory = VK_NULL_HANDLE;
+        _waterDepthOpticsActive = false;
+        _waterDepthSnapshotInitialized = false;
+    };
+
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(_physicalDevice, _depthFormat, &properties);
+    const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                          VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                                          VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if ((properties.optimalTilingFeatures & required) != required)
+    {
+        LOG_INFO(Graphics, "Vulkan water: sampled opaque depth unavailable for depth format {}; retaining waves/reflection",
+                 static_cast<int>(_depthFormat));
+        return true;
+    }
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = _depthFormat;
+    imageInfo.extent = {_swapchainExtent.width, _swapchainExtent.height, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateImage(_device, &imageInfo, nullptr, &_waterDepthImage) != VK_SUCCESS)
+        return true; // Cosmetic upgrade only; water stays on its existing path.
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(_device, _waterDepthImage, &requirements);
+    const uint32_t memoryType =
+        vk::FindMemoryType(_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memoryType == vk::kInvalidMemoryType)
+    {
+        destroySnapshot();
+        return true;
+    }
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(_device, &allocation, nullptr, &_waterDepthImageMemory) != VK_SUCCESS ||
+        vkBindImageMemory(_device, _waterDepthImage, _waterDepthImageMemory, 0) != VK_SUCCESS)
+    {
+        destroySnapshot();
+        return true;
+    }
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = _waterDepthImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = _depthFormat;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(_device, &viewInfo, nullptr, &_waterDepthImageView) != VK_SUCCESS)
+    {
+        destroySnapshot();
+        return true;
+    }
+    _waterDepthOpticsActive = true;
+    SetObjectName(VK_OBJECT_TYPE_IMAGE, VulkanObjectHandle(_waterDepthImage), "PoseidonVK Water Opaque Depth Snapshot");
+    SetObjectName(VK_OBJECT_TYPE_IMAGE_VIEW, VulkanObjectHandle(_waterDepthImageView), "PoseidonVK Water Opaque Depth View");
+    SetObjectName(VK_OBJECT_TYPE_RENDER_PASS, VulkanObjectHandle(_waterRenderPass), "PoseidonVK Water Pass");
+    return true;
+}
+
+void EngineVK::DestroyWaterDepthResources()
+{
+    if (_waterFramebuffer) vkDestroyFramebuffer(_device, _waterFramebuffer, nullptr);
+    if (_waterRenderPass) vkDestroyRenderPass(_device, _waterRenderPass, nullptr);
+    if (_waterDepthImageView) vkDestroyImageView(_device, _waterDepthImageView, nullptr);
+    if (_waterDepthImage) vkDestroyImage(_device, _waterDepthImage, nullptr);
+    if (_waterDepthImageMemory) vkFreeMemory(_device, _waterDepthImageMemory, nullptr);
+    _waterFramebuffer = VK_NULL_HANDLE;
+    _waterRenderPass = VK_NULL_HANDLE;
+    _waterDepthImageView = VK_NULL_HANDLE;
+    _waterDepthImage = VK_NULL_HANDLE;
+    _waterDepthImageMemory = VK_NULL_HANDLE;
+    _waterDepthOpticsActive = false;
+    _waterDepthSnapshotInitialized = false;
 }
 
 bool EngineVK::CreateCloudResources()
@@ -3656,6 +3928,7 @@ bool EngineVK::CreateScenePipeline()
         _worldPrepassScenePipelineCache.Destroy(_device);
         _cockpitScenePipelineCache.Destroy(_device);
         _worldLateScenePipelineCache.Destroy(_device);
+        _waterScenePipelineCache.Destroy(_device);
         if (_scenePipeline)
         {
             vkDestroyPipeline(_device, _scenePipeline, nullptr);
@@ -3675,6 +3948,11 @@ bool EngineVK::CreateScenePipeline()
         {
             vkDestroyPipeline(_device, _worldLateScenePipeline, nullptr);
             _worldLateScenePipeline = VK_NULL_HANDLE;
+        }
+        if (_waterScenePipeline)
+        {
+            vkDestroyPipeline(_device, _waterScenePipeline, nullptr);
+            _waterScenePipeline = VK_NULL_HANDLE;
         }
         if (_sceneVertexModule)
         {
@@ -3865,6 +4143,17 @@ bool EngineVK::CreateScenePipeline()
                                            &_worldPrepassScenePipeline);
     }
 
+    if (result == VK_SUCCESS && _waterRenderPass)
+    {
+        VkPipelineDepthStencilStateCreateInfo waterDepthStencil =
+            vk::BuildDepthStencilState(render::DepthMode::ReadOnly);
+        pipelineInfo.pDepthStencilState = &waterDepthStencil;
+        pipelineInfo.renderPass = _waterRenderPass;
+        result = vkCreateGraphicsPipelines(_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &_waterScenePipeline);
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.renderPass = _renderPass;
+    }
+
     if (result == VK_SUCCESS && _volumetricCloudsEnabled)
     {
         VkPipelineDepthStencilStateCreateInfo worldLateDepthStencil =
@@ -3902,6 +4191,8 @@ bool EngineVK::CreateScenePipeline()
     if (_worldLateScenePipeline)
         SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_worldLateScenePipeline),
                       "PoseidonVK World Late Scene Pipeline");
+    if (_waterScenePipeline)
+        SetObjectName(VK_OBJECT_TYPE_PIPELINE, VulkanObjectHandle(_waterScenePipeline), "PoseidonVK Water Scene Pipeline");
 
     // Initialise the pipeline cache with the fixed state shared across all variants.
     _scenePipelineCache.Init(_device, _renderPass, _scenePipelineLayout, _sceneVertexModule, _sceneFragmentModule,
@@ -3909,7 +4200,10 @@ bool EngineVK::CreateScenePipeline()
     if (_worldPrepassRenderPass)
         _worldPrepassScenePipelineCache.Init(_device, _worldPrepassRenderPass, _scenePipelineLayout,
                                              _sceneVertexModule, _scenePrepassFragmentModule, vertexInput,
-                                             inputAssembly, viewportState, multisampling);
+                                              inputAssembly, viewportState, multisampling);
+    if (_waterRenderPass)
+        _waterScenePipelineCache.Init(_device, _waterRenderPass, _scenePipelineLayout, _sceneVertexModule,
+                                      _sceneFragmentModule, vertexInput, inputAssembly, viewportState, multisampling);
     if (_volumetricCloudsEnabled)
     {
         _worldLateScenePipelineCache.Init(_device, _worldLateRenderPass, _scenePipelineLayout, _sceneVertexModule,
@@ -5636,14 +5930,18 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                            &hdrEnabled);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     }
+    bool recordingWaterPass = false;
     auto recordSceneDraws = [&](SceneGroup group)
     {
-        const VkPipeline fallbackScenePipeline = group == SceneGroup::WorldLate   ? _worldLateScenePipeline
-                                                : group == SceneGroup::Present    ? _cockpitScenePipeline
-                                                                                   : _scenePipeline;
+        const bool waterPassGroup = group == SceneGroup::Water ||
+                                    (recordingWaterPass && group == SceneGroup::Transparent);
+        const VkPipeline fallbackScenePipeline = group == SceneGroup::WorldLate ? _worldLateScenePipeline
+                                             : waterPassGroup ? _waterScenePipeline
+                                             : group == SceneGroup::Present ? _cockpitScenePipeline : _scenePipeline;
         vk::PipelineCacheVK& scenePipelineCache = group == SceneGroup::WorldLate ? _worldLateScenePipelineCache
-                                                 : group == SceneGroup::Present ? _cockpitScenePipelineCache
-                                                                               : _scenePipelineCache;
+                                                  : waterPassGroup ? _waterScenePipelineCache
+                                                  : group == SceneGroup::Present ? _cockpitScenePipelineCache
+                                                                                : _scenePipelineCache;
         if (!fallbackScenePipeline)
             return;
 
@@ -5659,7 +5957,10 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         // do not dynamically access it.
         if (_skyMapDescriptorSet)
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 3, 1,
-                                    &_skyMapDescriptorSet, 0, nullptr);
+                                     &_skyMapDescriptorSet, 0, nullptr);
+        if (_waterDepthDescriptorSet)
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _scenePipelineLayout, 4, 1,
+                                    &_waterDepthDescriptorSet, 0, nullptr);
 
         // GPU scene batches are constructed only across identical mesh/material
         // state (and never reordered in transparent/cockpit groups).  Compute
@@ -5699,8 +6000,10 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 vk::PipelineKeyVK key;
                 key.cull = static_cast<render::CullMode>(draw.cull);
                 key.frontFace = static_cast<render::FrontFaceMode>(draw.frontFace);
-                key.depth = group == SceneGroup::WorldLate ? render::DepthMode::ReadOnly
-                                                           : static_cast<render::DepthMode>(draw.depth);
+                key.depth = static_cast<render::DepthMode>(draw.depth);
+                if (group == SceneGroup::WorldLate || group == SceneGroup::Water ||
+                    (recordingWaterPass && group == SceneGroup::Transparent && key.depth == render::DepthMode::Normal))
+                    key.depth = render::DepthMode::ReadOnly;
                 key.blend = static_cast<render::BlendMode>(draw.blend);
                 key.surface = static_cast<render::SurfaceMode>(draw.surface);
                 VkPipeline pipeline = scenePipelineCache.Get(key);
@@ -5808,7 +6111,8 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
                 key.depth = static_cast<render::DepthMode>(draw.depth);
                 key.blend = static_cast<render::BlendMode>(draw.blend);
                 key.surface = static_cast<render::SurfaceMode>(draw.surface);
-                if (group == SceneGroup::WorldLate)
+                if (group == SceneGroup::WorldLate || group == SceneGroup::Water ||
+                    (recordingWaterPass && group == SceneGroup::Transparent && key.depth == render::DepthMode::Normal))
                     key.depth = render::DepthMode::ReadOnly;
 
                 VkPipeline pipeline = scenePipelineCache.Get(key);
@@ -6003,10 +6307,74 @@ bool EngineVK::RecordBootstrapCommand(uint32_t imageIndex)
         if (_gpuTimingQueryPool)
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _gpuTimingQueryPool, 3);
         recordSceneDraws(SceneGroup::Other);
+        vkCmdEndRenderPass(commandBuffer);
+        // The receiver pass owns terrain, opaque, cutout, and legacy overlays.
+        // Copy its completed depth before water begins: the water pass later
+        // binds _worldDepthImage read-only and samples only this separate image.
+        if (_waterDepthOpticsActive)
+        {
+            VkImageMemoryBarrier barriers[2] = {};
+            barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[0].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].image = _worldDepthImage;
+            barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barriers[0].subresourceRange.levelCount = 1;
+            barriers[0].subresourceRange.layerCount = 1;
+            barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[1].srcAccessMask = _waterDepthSnapshotInitialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+            barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[1].oldLayout = _waterDepthSnapshotInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                                      : VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].image = _waterDepthImage;
+            barriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barriers[1].subresourceRange.levelCount = 1;
+            barriers[1].subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(commandBuffer,
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                     (_waterDepthSnapshotInitialized ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                                                     : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+            VkImageCopy copy{};
+            copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            copy.srcSubresource.layerCount = 1;
+            copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            copy.dstSubresource.layerCount = 1;
+            copy.extent = {_swapchainExtent.width, _swapchainExtent.height, 1};
+            vkCmdCopyImage(commandBuffer, _worldDepthImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _waterDepthImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                 0, 0, nullptr, 0, nullptr, 2, barriers);
+        }
+        if (_waterRenderPass && _waterFramebuffer)
+        {
+            BeginDebugLabel(commandBuffer, "PoseidonVK Water Depth Optics", 0.05f, 0.36f, 0.48f);
+            renderPassInfo.renderPass = _waterRenderPass;
+            renderPassInfo.framebuffer = _waterFramebuffer;
+            renderPassInfo.clearValueCount = 0;
+            renderPassInfo.pClearValues = nullptr;
+            vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            recordingWaterPass = true;
+            recordSceneDraws(SceneGroup::Water);
+            recordSceneDraws(SceneGroup::Transparent);
+            recordingWaterPass = false;
+            vkCmdEndRenderPass(commandBuffer);
+            EndDebugLabel(commandBuffer);
+        }
         if (_gpuTimingQueryPool)
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _gpuTimingQueryPool, 4);
-        recordSceneDraws(SceneGroup::Transparent);
-        vkCmdEndRenderPass(commandBuffer);
         if (_gpuTimingQueryPool)
             vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _gpuTimingQueryPool, 5);
         if (_volumetricCloudsEnabled && _volumetricCloudPipeline && _cloudTemporalPipeline &&
@@ -6145,6 +6513,7 @@ void EngineVK::DestroySwapchain()
     _worldPrepassScenePipelineCache.Destroy(_device);
     _cockpitScenePipelineCache.Destroy(_device);
     _worldLateScenePipelineCache.Destroy(_device);
+    _waterScenePipelineCache.Destroy(_device);
     // This pipeline bakes the active render pass and viewport. Maps and their
     // descriptor sets survive resize, but the graphics pipeline must not.
     _terrainVk.DestroyRasterPipeline(_device);
@@ -6188,6 +6557,12 @@ void EngineVK::DestroySwapchain()
     DestroyCloudComputeDescriptorResources();
     DestroyWorldCompositeDescriptorResources();
     DestroyEyeAdaptationDescriptorResources();
+    if (_waterDepthDescriptorPool)
+    {
+        vkDestroyDescriptorPool(_device, _waterDepthDescriptorPool, nullptr);
+        _waterDepthDescriptorPool = VK_NULL_HANDLE;
+        _waterDepthDescriptorSet = VK_NULL_HANDLE;
+    }
 
     if (_scenePipeline)
     {
@@ -6203,6 +6578,11 @@ void EngineVK::DestroySwapchain()
     {
         vkDestroyPipeline(_device, _worldLateScenePipeline, nullptr);
         _worldLateScenePipeline = VK_NULL_HANDLE;
+    }
+    if (_waterScenePipeline)
+    {
+        vkDestroyPipeline(_device, _waterScenePipeline, nullptr);
+        _waterScenePipeline = VK_NULL_HANDLE;
     }
     if (_bootstrapPipeline)
     {
@@ -6343,6 +6723,7 @@ void EngineVK::DestroyScenePipelineLayout()
     _scenePipelineCache.Destroy(_device);
     _cockpitScenePipelineCache.Destroy(_device);
     _worldLateScenePipelineCache.Destroy(_device);
+    _waterScenePipelineCache.Destroy(_device);
 
     if (_sceneFragmentModule)
     {
@@ -6431,6 +6812,7 @@ bool EngineVK::RecreateSwapchain()
     vkDeviceWaitIdle(_device);
     DestroySwapchain();
     const bool recreated = CreateSwapchain() &&
+                            CreateWaterDepthDescriptorSet() &&
                             (!_volumetricCloudsEnabled || CreateVolumetricCloudDescriptorSet()) &&
                             (!_volumetricCloudsEnabled || CreateCloudComputeDescriptorSets()) &&
                             (!_temporalExposureEnabled || CreateEyeAdaptationDescriptorSet()) &&
@@ -6518,6 +6900,8 @@ void EngineVK::PresentBootstrapFrame()
         RecreateSignaledFence(_device, _inFlight);
         return;
     }
+    if (_waterDepthOpticsActive)
+        _waterDepthSnapshotInitialized = true;
     CommitRecordedTextureUploads();
     if (_eyeAdaptationPendingWrite)
     {
@@ -6596,6 +6980,7 @@ void EngineVK::Shutdown()
         DestroyWorldCompositePipelineLayout();
         DestroyEyeAdaptationPipelineLayout();
         DestroyScenePipelineLayout();
+        DestroyWaterDepthDescriptorResources();
         DestroyFrameDescriptorResources();
         DestroyTextureDescriptorResources();
         DestroyGpuSceneResources();
