@@ -66,21 +66,27 @@ void main()
                               volumeOrigin.y + (uv.z * 2.0 - 1.0) * halfExtent);
     vec3 p = (worldPosition - frame.windOffset.xyz) * 0.00023;
     uint seed = uint(max(frame.skyVisibility.z, 0.0));
-    float macro = ValueNoise(p, seed) * 0.55 + ValueNoise(p * 2.07 + 19.7, seed) * 0.30;
-    float erosion = ValueNoise(p * 4.13 - 7.1, seed);
+    float macro = ValueNoise(p, seed) * 0.55 + ValueNoise(p * 2.07 + 19.7, seed) * 0.30 +
+                  ValueNoise(p * 3.61 - 11.3, seed) * 0.15;
+    float erosion = ValueNoise(p * 6.17 - 7.1, seed);
     // Keep the volume's weather threshold in lockstep with the sky-map deck.
     // At the authored overcast of about 0.5 this retains broken body clouds,
     // while the lower shoulder supplies sparse material between them.
     float coverage = mix(0.50, 0.24, clamp(frame.cloudWeather.x, 0.0, 1.0));
-    float body = smoothstep(coverage - 0.14, coverage + 0.12, macro);
-    float wisps = smoothstep(coverage - 0.28, coverage - 0.02, macro) * 0.34;
-    float vertical = clamp(uv.y / 0.30, 0.0, 1.0) * (1.0 - clamp((uv.y - 0.62) / 0.38, 0.0, 1.0));
+    float body = smoothstep(coverage - 0.11, coverage + 0.10, macro);
+    // Give each macro cell a substantial base and a noise-driven rounded crown.
+    // The former wisp shoulder made the whole layer read as uniform haze; this
+    // keeps broken coverage but yields discrete cumulus-like cloud bodies.
+    float cloudTop = mix(0.48, 0.86, smoothstep(coverage - 0.08, coverage + 0.20, macro));
+    float verticalBase = smoothstep(0.01, 0.20, uv.y);
+    float verticalTop = 1.0 - smoothstep(cloudTop - 0.18, cloudTop, uv.y);
+    float vertical = verticalBase * verticalTop;
     float edge = max(abs(uv.x * 2.0 - 1.0), abs(uv.z * 2.0 - 1.0));
     float edgeFade = 1.0 - clamp((edge - 0.80) / 0.18, 0.0, 1.0);
-    // Wisp density remains above the distance-field occupancy cutoff in its
-    // visible portions, so conservative empty-space skipping cannot erase it.
-    float materialDensity = max(body * 0.20, wisps * 0.22);
-    float erosionFade = mix(0.65, 1.0, erosion);
+    // Carve the high-frequency noise from only the outer body. This retains
+    // dense, shadow-casting interiors while breaking up silhouettes and crowns.
+    float erosionFade = mix(0.58, 1.0, erosion);
+    float materialDensity = body * mix(0.29, 0.46, erosion);
     float density = materialDensity * erosionFade * vertical * edgeFade * weatherDensity;
     imageStore(cloudDensity, voxel, vec4(density, 0.0, 0.0, 1.0));
 }
